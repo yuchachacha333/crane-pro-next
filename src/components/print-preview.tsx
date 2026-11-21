@@ -249,8 +249,8 @@ function FormPage({
       className="dispatch-page"
       data-orient={layout.orientation === 'landscape' ? 'landscape' : 'portrait'}
       style={{
-        width: layout.orientation === 'landscape' ? '297mm' : '210mm',
-        minHeight: layout.orientation === 'landscape' ? '210mm' : '297mm',
+        width: '100%',
+        maxWidth: layout.orientation === 'landscape' ? '297mm' : '210mm',
         margin: '0 auto 16px',
         background: '#fff',
         color: '#000',
@@ -347,8 +347,8 @@ function BoardPage({ layout, jobs, date }: { layout: SheetLayout; jobs: PrintJob
         className="dispatch-page"
         data-orient={layout.orientation === 'landscape' ? 'landscape' : 'portrait'}
         style={{
-          width: layout.orientation === 'landscape' ? '297mm' : '210mm',
-          minHeight: layout.orientation === 'landscape' ? '210mm' : '297mm',
+          width: '100%',
+          maxWidth: layout.orientation === 'landscape' ? '297mm' : '210mm',
           margin: '0 auto 16px',
           background: '#fff',
           color: '#000',
@@ -396,6 +396,9 @@ function BoardPage({ layout, jobs, date }: { layout: SheetLayout; jobs: PrintJob
                           ...bookCss(item.cell, scale),
                           background: job?.cancelled ? '#d9d9d9' : tone || undefined,
                           color: job?.cancelled ? '#4b5563' : undefined,
+                          whiteSpace: 'normal',
+                          wordBreak: 'break-word',
+                          overflow: 'hidden',
                           WebkitPrintColorAdjust: 'exact',
                           printColorAdjust: 'exact',
                         }}
@@ -427,12 +430,13 @@ function printPages() {
   if (!pages.length || !pages[0].querySelector('table')) return;
   const orient = pages[0].getAttribute('data-orient') === 'landscape' ? 'landscape' : 'portrait';
   const css =
-    `@page{size:A4 ${orient};margin:0}` +
+    `@page{size:A4 ${orient};margin:8mm}` +
     'html,body{margin:0;padding:0;background:#fff;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
     'body{font-family:"Yu Gothic","Yu Gothic UI","Hiragino Sans",Meiryo,sans-serif}' +
-    'table{width:100%;border-collapse:collapse;table-layout:fixed}' +
-    'td{-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
-    '.sheet{page-break-after:always}.sheet:last-child{page-break-after:auto}';
+    '.sheet{width:100% !important;max-width:100% !important;min-height:0 !important;height:auto !important;margin:0 !important;box-shadow:none !important;box-sizing:border-box !important;page-break-after:always;overflow:hidden}' +
+    '.sheet:last-child{page-break-after:auto}' +
+    'table{width:100% !important;border-collapse:collapse;table-layout:fixed}' +
+    'td{overflow:hidden !important;white-space:normal !important;word-break:break-word !important;-webkit-print-color-adjust:exact;print-color-adjust:exact}';
   let body = '';
   pages.forEach((page) => {
     if (!page.querySelector('table')) return;

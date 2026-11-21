@@ -665,26 +665,24 @@ export default function CraneProApp() {
         </div>
 
         {/* 日付・曜日・六曜ナビゲーションバー */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3 md:p-4 mb-5 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
+        <div className="bg-white rounded-xl md:rounded-2xl border border-slate-200 shadow-sm px-2 py-2 md:p-4 mb-3 md:mb-5 flex flex-wrap items-center justify-between gap-1.5 md:gap-4">
+          <div className="flex items-center gap-1.5 md:gap-2">
             <button
               onClick={() => setBoardDate(shiftIsoDate(boardDate, -1))}
-              className="w-11 h-12 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-700"
+              className="w-8 h-8 md:w-11 md:h-12 rounded-lg md:rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-700"
               aria-label="前日"
             >
-              <ChevronLeft className="w-6 h-6" />
+              <ChevronLeft className="w-4 h-4 md:w-6 md:h-6" />
             </button>
 
-            <div className="flex items-baseline gap-3 px-4 py-2 rounded-xl bg-sky-50 border border-sky-200">
-              <span className="text-2xl md:text-3xl font-black text-slate-900">
+            <div className="flex items-center md:items-baseline gap-1.5 md:gap-3 px-2 md:px-4 h-8 md:h-auto md:py-2 rounded-lg md:rounded-xl bg-sky-50 border border-sky-200">
+              <span className="text-sm md:text-3xl font-black text-slate-900 leading-none">
                 {boardDate ? formatJapaneseMonthDay(boardDate) : '…'}
               </span>
-              <span className="text-base md:text-lg font-bold text-sky-900">
-                （{weekdayLabel}）
-              </span>
+              <span className="text-xs md:text-lg font-bold text-sky-900 leading-none">（{weekdayLabel}）</span>
               {rokuyoLabel && (
                 <span
-                  className={`px-2.5 py-0.5 rounded-full text-xs md:text-sm font-extrabold ${
+                  className={`px-1.5 md:px-2.5 py-0.5 rounded-full text-[10px] md:text-sm font-extrabold leading-none ${
                     rokuyoLabel === '大安'
                       ? 'bg-rose-100 text-rose-800'
                       : rokuyoLabel === '仏滅'
@@ -699,32 +697,29 @@ export default function CraneProApp() {
 
             <button
               onClick={() => setBoardDate(shiftIsoDate(boardDate, 1))}
-              className="w-11 h-12 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-700"
+              className="w-8 h-8 md:w-11 md:h-12 rounded-lg md:rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-700"
               aria-label="翌日"
             >
-              <ChevronRight className="w-6 h-6" />
+              <ChevronRight className="w-4 h-4 md:w-6 md:h-6" />
             </button>
 
             <button
               onClick={() => setBoardDate(getTodayIso())}
-              className="px-3.5 h-12 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-sm font-bold text-slate-700"
+              className="px-2.5 md:px-3.5 h-8 md:h-12 rounded-lg md:rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-xs md:text-sm font-bold text-slate-700"
             >
               今日
             </button>
           </div>
-
-          <div className="flex items-center gap-3">
-            <input
-              type="date"
-              value={boardDate}
-              onChange={(e) => e.target.value && setBoardDate(e.target.value)}
-              className="h-11 px-3 rounded-xl border border-slate-300 bg-white font-bold text-sm text-slate-800"
-            />
-          </div>
+          <input
+            type="date"
+            value={boardDate}
+            onChange={(e) => e.target.value && setBoardDate(e.target.value)}
+            className="h-8 md:h-11 w-[9.2rem] md:w-auto px-2 md:px-3 rounded-lg md:rounded-xl border border-slate-300 bg-white font-bold text-xs md:text-sm text-slate-800"
+          />
         </div>
 
         {monthDays.length > 0 && (
-          <div className="flex flex-wrap gap-1 mb-4">
+          <div className="flex flex-nowrap md:flex-wrap gap-1 mb-3 md:mb-4 overflow-x-auto md:overflow-visible pb-1">
             {monthDays.map((day) => {
               const count = monthCounts[day] ?? 0;
               const active = day === boardDate;
@@ -734,7 +729,7 @@ export default function CraneProApp() {
                   key={day}
                   type="button"
                   onClick={() => setBoardDate(day)}
-                  className={`h-10 min-w-9 px-1.5 rounded-lg text-xs font-extrabold leading-none ${
+                  className={`h-8 min-w-8 md:h-10 md:min-w-9 shrink-0 px-1 md:px-1.5 rounded-md md:rounded-lg text-[11px] md:text-xs font-extrabold leading-none ${
                     unassigned
                       ? active
                         ? 'bg-amber-400 text-amber-950 ring-2 ring-amber-700'
@@ -1084,7 +1079,12 @@ export default function CraneProApp() {
 
             {/* スマホ・タブレット用 現場カード一覧 */}
             <div className="lg:hidden space-y-3">
-              {filteredDispatches.map((row, idx) => (
+              {filteredDispatches.map((row, idx) => {
+                const hasOp = Boolean(row.operator_name?.trim());
+                const hasSup = Boolean(row.supplier_name?.trim());
+                const fieldClass =
+                  'w-full h-10 px-2.5 rounded-lg border border-slate-300 bg-white font-bold text-sm outline-none focus:ring-2 focus:ring-teal-600 disabled:bg-slate-100 disabled:text-slate-400';
+                return (
                 <div
                   key={row.id}
                   className={`rounded-2xl border p-4 shadow-sm ${
@@ -1119,27 +1119,125 @@ export default function CraneProApp() {
                     </button>
                   </div>
 
-                  <div className="font-extrabold text-lg text-slate-900">
-                    {row.site_name || '（現場名未入力）'}
-                  </div>
-                  <div className="text-sm font-bold text-slate-600 mt-0.5">
-                    {row.customer_name || '（得意先未入力）'}
-                  </div>
-                  {row.contact_name && (
-                    <div className="text-sm font-bold text-teal-800 mt-0.5">
-                      担当 {row.contact_name}
-                      {row.contact_tel ? ` ${row.contact_tel}` : ''}
+                  <div className="space-y-2">
+                    <label className="block">
+                      <span className="text-[11px] font-extrabold text-slate-500">配車先（現場）</span>
+                      <SuggestInput
+                        value={row.site_name || ''}
+                        placeholder="現場名"
+                        options={siteChoices(row.customer_code || '', row.customer_name || '', row.site_name || '')}
+                        onChange={(val) => {
+                          const hit = sites.find(
+                            (site) =>
+                              site.name === val &&
+                              (!row.customer_code || !site.customer_code || site.customer_code === row.customer_code)
+                          );
+                          commitSite(row, val, hit);
+                        }}
+                        onPick={(option) => {
+                          const hit = sites.find((site) => site.id === option.id);
+                          commitSite(row, hit?.name || option.value, hit);
+                        }}
+                        className={fieldClass}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-[11px] font-extrabold text-slate-500">得意先</span>
+                      <input
+                        type="text"
+                        list="customer-names"
+                        value={row.customer_name || ''}
+                        placeholder="得意先名"
+                        autoComplete="off"
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const hit = customers.find((customer) => customer.name === val);
+                          if (!hit) {
+                            handleUpdateField(row.id, {
+                              customer_name: val,
+                              ...(val ? {} : { customer_code: '', contact_code: '', contact_name: '', contact_tel: '' }),
+                            });
+                            return;
+                          }
+                          const people = peopleFor(hit.code || '', hit.name || '');
+                          const only = people.length === 1 ? people[0] : null;
+                          const changed = (hit.code || '') !== (row.customer_code || '');
+                          handleUpdateField(row.id, {
+                            customer_name: val,
+                            customer_code: hit.code || '',
+                            ...(changed
+                              ? {
+                                  site_code: '',
+                                  site_name: '',
+                                  contact_code: only?.code || '',
+                                  contact_name: only?.name || '',
+                                  contact_tel: only?.tel || '',
+                                }
+                              : only && !row.contact_name
+                                ? { contact_code: only.code, contact_name: only.name, contact_tel: only.tel }
+                                : {}),
+                          });
+                        }}
+                        className={fieldClass}
+                      />
+                    </label>
+                    {contactChooser(row, (patch) => handleUpdateField(row.id, patch), fieldClass)}
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="block">
+                        <span className="text-[11px] font-extrabold text-slate-500">オペレーター</span>
+                        <input
+                          type="text"
+                          list="operator-names"
+                          autoComplete="off"
+                          disabled={hasSup && !hasOp}
+                          value={row.operator_name || ''}
+                          placeholder={hasSup ? '庸車指定中' : 'オペ入力'}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            const hit = operators.find((op) => op.name === val);
+                            handleUpdateField(row.id, {
+                              operator_name: val,
+                              ...(hit
+                                ? { operator_code: hit.code || '', supplier_name: '', supplier_code: '' }
+                                : val
+                                  ? { supplier_name: '', supplier_code: '' }
+                                  : { operator_code: '' }),
+                            });
+                          }}
+                          className={fieldClass}
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="text-[11px] font-extrabold text-slate-500">庸車</span>
+                        <input
+                          type="text"
+                          list="supplier-names"
+                          autoComplete="off"
+                          disabled={hasOp && !hasSup}
+                          value={row.supplier_name || ''}
+                          placeholder={hasOp ? '自社オペ中' : '庸車先入力'}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            const hit = customers.find(
+                              (customer) =>
+                                customer.name === val && String(customer.partner_type || '').includes('仕入')
+                            );
+                            handleUpdateField(row.id, {
+                              supplier_name: val,
+                              ...(hit
+                                ? { supplier_code: hit.code || '', operator_name: '', operator_code: '' }
+                                : val
+                                  ? { operator_name: '', operator_code: '' }
+                                  : { supplier_code: '' }),
+                            });
+                          }}
+                          className={fieldClass}
+                        />
+                      </label>
                     </div>
-                  )}
+                  </div>
 
-                  <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-sm">
-                    <div className="font-bold text-slate-800">
-                      {row.operator_name
-                        ? `オペ: ${row.operator_name}`
-                        : row.supplier_name
-                        ? `庸車: ${row.supplier_name}`
-                        : 'オペ・庸車 未割当'}
-                    </div>
+                  <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-end text-sm">
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => handleCopyRow(row)}
@@ -1156,7 +1254,8 @@ export default function CraneProApp() {
                     </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </>
         )}
