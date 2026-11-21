@@ -13,7 +13,8 @@ export function getWeekday(isoDate: string): string {
   
   export function shiftIsoDate(isoDate: string, days: number): string {
     const m = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    const d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date();
+    if (!m) return isoDate;
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
     d.setDate(d.getDate() + days);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }

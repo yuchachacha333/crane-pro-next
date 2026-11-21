@@ -1,6 +1,6 @@
 import ExcelJS from 'exceljs';
 
-export type TableName = 'customers' | 'sites' | 'operators' | 'machine_models' | 'products';
+export type TableName = 'customers' | 'sites' | 'operators' | 'machine_models' | 'products' | 'customer_contacts';
 export type FieldType = 'text' | 'number' | 'bool' | 'date';
 
 type FieldDef = {
@@ -24,6 +24,7 @@ export type ParsedSheet = {
   label: string;
   importable: number;
   skippedNoCode: number;
+  skippedNoName: number;
   duplicateCodes: number;
   mapped: MappedHeader[];
   unmapped: string[];
@@ -164,9 +165,21 @@ const TABLES: TableDef[] = [
       { column: 'upper_inspection_expiry', type: 'date', headers: ['上車検満了日', 'upper_inspection_expiry'] },
     ],
   },
+  {
+    table: 'customer_contacts',
+    label: '担当者マスタ',
+    sheetNames: ['担当者マスタ', 'customer_contacts'],
+    fields: [
+      { column: 'code', type: 'text', headers: ['担当者コード', 'code'] },
+      { column: 'customer_code', type: 'text', headers: ['得意先コード', 'customer_code'] },
+      { column: 'customer_name', type: 'text', headers: ['得意先名', 'customer_name'] },
+      { column: 'name', type: 'text', headers: ['担当者名', 'name'] },
+      { column: 'tel', type: 'text', headers: ['電話番号', '携帯番号', 'tel'] },
+    ],
+  },
 ];
 
-const TABLE_ORDER: TableName[] = ['customers', 'machine_models', 'operators', 'products', 'sites'];
+const TABLE_ORDER: TableName[] = ['customers', 'machine_models', 'operators', 'products', 'sites', 'customer_contacts'];
 
 export function normalizeHeader(raw: string): string {
   return raw.normalize('NFKC').replace(/\s+/g, '').trim();
@@ -213,6 +226,10 @@ function buildLookup(table: TableDef): Map<string, FieldDef> {
     for (const header of field.headers) lookup.set(normalizeHeader(header), field);
   }
   return lookup;
+}
+
+function textValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function coerce(raw: string, type: FieldType): string | number | boolean | null {
@@ -270,6 +287,7 @@ function parseTable(sheetName: string, headerRow: string[], dataRows: { line: nu
     label: detected?.label ?? sheetName,
     importable: 0,
     skippedNoCode: 0,
+    skippedNoName: 0,
     duplicateCodes: 0,
     mapped: [],
     unmapped: [],
@@ -312,6 +330,7 @@ function parseTable(sheetName: string, headerRow: string[], dataRows: { line: nu
   }
 
   const byCode = new Map<string, Record<string, unknown>>();
+  const filledNames: string[] = [];
   for (const dataRow of dataRows) {
     const record: Record<string, unknown> = {};
     let code = '';
@@ -333,8 +352,28 @@ function parseTable(sheetName: string, headerRow: string[], dataRows: { line: nu
       base.skippedNoCode += 1;
       continue;
     }
+    if (!textValue(record.name)) {
+      const fallback = textValue(record.address) || textValue(record.address1);
+      if (fallback) {
+        record.name = fallback;
+        filledNames.push(code);
+      } else if (detected.table === 'sites') {
+        record.name = '名称未設定';
+        filledNames.push(code);
+      } else {
+        base.skippedNoName += 1;
+        continue;
+      }
+    }
     if (byCode.has(code)) base.duplicateCodes += 1;
     byCode.set(code, record);
+  }
+
+  if (filledNames.length > 0) {
+    const sample = filledNames.slice(0, 8).join('、');
+    base.warnings.unshift(
+      `名称が空の${filledNames.length}件は、住所を名称にして保存します。住所も空の現場は「名称未設定」にします（${sample}）`
+    );
   }
 
   base.rows = [...byCode.values()];
@@ -343,7 +382,7 @@ function parseTable(sheetName: string, headerRow: string[], dataRows: { line: nu
     const sample: Record<string, string | number | boolean | null> = {};
     for (const [key, value] of Object.entries(row)) {
       if (value == null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-        sample[key] = value;
+        sample[key] = value ?? null;
       }
     }
     return sample;
@@ -429,6 +468,7 @@ export async function parseMasterFile(filename: string, buffer: ArrayBuffer): Pr
           label: filename,
           importable: 0,
           skippedNoCode: 0,
+          skippedNoName: 0,
           duplicateCodes: 0,
           mapped: [],
           unmapped: [],
@@ -467,6 +507,7 @@ export async function parseMasterFile(filename: string, buffer: ArrayBuffer): Pr
         label: worksheet.name,
         importable: 0,
         skippedNoCode: 0,
+        skippedNoName: 0,
         duplicateCodes: 0,
         mapped: [],
         unmapped: [],

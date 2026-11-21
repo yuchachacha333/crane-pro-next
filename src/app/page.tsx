@@ -1,30 +1,31 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
-  Calendar,
   ChevronLeft,
   ChevronRight,
   Plus,
-  Printer,
-  FileText,
   Copy,
   ClipboardPaste,
   Trash2,
   CheckCircle2,
   Clock,
-  Truck,
   Users,
   MapPin,
-  Receipt,
   AlertTriangle,
   Search,
   X,
   Save,
-  Building2,
   Wrench,
 } from 'lucide-react';
+import AppSidebar from '@/components/app-sidebar';
+import ContactRegisterDialog, { type ContactDraft } from '@/components/contact-register-dialog';
+import SiteRegisterDialog, { type SiteDraft } from '@/components/site-register-dialog';
+import PrintPreview, { type PrintKind } from '@/components/print-preview';
+import SuggestInput, { type SuggestOption } from '@/components/suggest-input';
 import { supabase, getDefaultCompanyId } from '@/lib/supabase';
+import { sameCode, sameParty, partyKey } from '@/lib/party-name';
+import { toHalfwidthTime } from '@/lib/time-text';
 import {
   getWeekday,
   formatJapaneseMonthDay,
@@ -79,9 +80,40 @@ interface ExtraLine {
   notes: string;
 }
 
+type ContactPerson = {
+  id: string;
+  code: string;
+  customer_code: string;
+  customer_name: string;
+  name: string;
+  tel: string;
+};
+
+function isUnassigned(row: Pick<DispatchRecord, 'operator_name' | 'supplier_name' | 'is_cancelled'>) {
+  return !row.is_cancelled && !row.operator_name?.trim() && !row.supplier_name?.trim();
+}
+
+async function fetchCompanyRows(table: string, companyId: string, orderColumn: string) {
+  const pageSize = 1000;
+  const rows: Record<string, string>[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from(table)
+      .select('*')
+      .eq('company_id', companyId)
+      .order(orderColumn, { ascending: true })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    const page = (data ?? []) as Record<string, string>[];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+  }
+  return rows;
+}
+
 export default function CraneProApp() {
   const [companyId, setCompanyId] = useState<string>('');
-  const [boardDate, setBoardDate] = useState<string>(getTodayIso());
+  const [boardDate, setBoardDate] = useState<string>('');
   const [filter, setFilter] = useState<'all' | 'open' | 'done'>('all');
   const [dispatches, setDispatches] = useState<DispatchRecord[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -101,11 +133,23 @@ export default function CraneProApp() {
   const [sites, setSites] = useState<any[]>([]);
   const [operators, setOperators] = useState<any[]>([]);
   const [models, setModels] = useState<any[]>([]);
+  const [monthCounts, setMonthCounts] = useState<Record<string, number>>({});
+  const [openDays, setOpenDays] = useState<Record<string, boolean>>({});
+  const [printRequest, setPrintRequest] = useState<{ kind: PrintKind; jobId: string } | null>(null);
+  const [contacts, setContacts] = useState<ContactPerson[]>([]);
+  const [contactsLocked, setContactsLocked] = useState(false);
+  const [siteDraft, setSiteDraft] = useState<SiteDraft | null>(null);
+  const [contactDraft, setContactDraft] = useState<ContactDraft | null>(null);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
     setTimeout(() => setToastMsg(''), 2600);
   };
+
+  // 今日の日付は描画後に決める。初期描画で new Date() すると Next.js が事前レンダリングを止める。
+  useEffect(() => {
+    setBoardDate(getTodayIso());
+  }, []);
 
   // 初期データ（会社ID・マスタ類）の読み込み
   useEffect(() => {
@@ -114,17 +158,27 @@ export default function CraneProApp() {
         const cid = await getDefaultCompanyId();
         setCompanyId(cid);
 
-        const [custRes, siteRes, opRes, modRes] = await Promise.all([
-          supabase.from('customers').select('*').eq('company_id', cid).order('search_word', { ascending: true }),
-          supabase.from('sites').select('*').eq('company_id', cid).order('name', { ascending: true }),
-          supabase.from('operators').select('*').eq('company_id', cid).order('sort_order', { ascending: true }),
-          supabase.from('machine_models').select('*').eq('company_id', cid).order('sort_order', { ascending: true }),
+        const [custRows, siteRows, opRows, modRows] = await Promise.all([
+          fetchCompanyRows('customers', cid, 'search_word'),
+          fetchCompanyRows('sites', cid, 'name'),
+          fetchCompanyRows('operators', cid, 'sort_order'),
+          fetchCompanyRows('machine_models', cid, 'sort_order'),
         ]);
 
-        if (custRes.data) setCustomers(custRes.data);
-        if (siteRes.data) setSites(siteRes.data);
-        if (opRes.data) setOperators(opRes.data);
-        if (modRes.data) setModels(modRes.data);
+        setCustomers(custRows);
+        setSites(siteRows);
+        setOperators(opRows);
+        setModels(modRows);
+
+        const contactRes = await supabase
+          .from('customer_contacts')
+          .select('id, code, customer_code, customer_name, name, tel')
+          .eq('company_id', cid);
+        if (contactRes.error) {
+          if (/permission denied/i.test(contactRes.error.message)) setContactsLocked(true);
+        } else {
+          setContacts((contactRes.data ?? []) as ContactPerson[]);
+        }
       } catch (err: any) {
         showToast(err.message || '初期データの読み込みに失敗しました');
       }
@@ -134,7 +188,7 @@ export default function CraneProApp() {
 
   // 指定日の配車データ取得
   const fetchDispatches = useCallback(async () => {
-    if (!companyId) return;
+    if (!companyId || !boardDate) return;
     setLoading(true);
     const { data, error } = await supabase
       .from('dispatches')
@@ -156,9 +210,40 @@ export default function CraneProApp() {
     fetchDispatches();
   }, [fetchDispatches]);
 
+  const boardMonth = boardDate.slice(0, 7);
+  useEffect(() => {
+    if (!companyId || !/^\d{4}-\d{2}$/.test(boardMonth)) return;
+    let cancelled = false;
+    const year = Number(boardMonth.slice(0, 4));
+    const month = Number(boardMonth.slice(5, 7));
+    const last = new Date(year, month, 0).getDate();
+    const end = `${boardMonth}-${String(last).padStart(2, '0')}`;
+    supabase
+      .from('dispatches')
+      .select('work_date, operator_name, supplier_name, is_cancelled')
+      .eq('company_id', companyId)
+      .gte('work_date', `${boardMonth}-01`)
+      .lte('work_date', end)
+      .then(({ data }) => {
+        if (cancelled) return;
+        const counts: Record<string, number> = {};
+        const open: Record<string, boolean> = {};
+        for (const row of data ?? []) {
+          const day = String(row.work_date);
+          counts[day] = (counts[day] ?? 0) + 1;
+          if (isUnassigned(row)) open[day] = true;
+        }
+        setMonthCounts(counts);
+        setOpenDays(open);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId, boardMonth, dispatches.map((row) => `${row.id}:${isUnassigned(row) ? 1 : 0}`).join(',')]);
+
   // 新規配車行の追加
   const handleAddRow = async () => {
-    if (!companyId) return;
+    if (!companyId || !boardDate) return;
     const newRow = {
       company_id: companyId,
       work_date: boardDate,
@@ -195,23 +280,24 @@ export default function CraneProApp() {
   // 行のインライン更新（オートセーブ）
   const handleUpdateField = async (id: string, patch: Partial<DispatchRecord>) => {
     // 画面状態を即座に反映
+    const nextPatch = { ...patch };
+    if (typeof nextPatch.entry_time === 'string') nextPatch.entry_time = toHalfwidthTime(nextPatch.entry_time);
     setDispatches((prev) =>
       prev.map((row) => {
         if (row.id !== id) return row;
-        const updated = { ...row, ...patch };
-        // 配車済みフラグの自動判定
+        const updated = { ...row, ...nextPatch };
         const hasCrewOrMachine = Boolean(
           updated.operator_name?.trim() ||
             updated.supplier_name?.trim() ||
             updated.requested_model?.trim()
         );
         updated.is_dispatched = !updated.is_cancelled && hasCrewOrMachine;
-        patch.is_dispatched = updated.is_dispatched;
+        nextPatch.is_dispatched = updated.is_dispatched;
         return updated;
       })
     );
 
-    const { error } = await supabase.from('dispatches').update(patch).eq('id', id);
+    const { error } = await supabase.from('dispatches').update(nextPatch).eq('id', id);
     if (error) {
       showToast('保存エラー: ' + error.message);
     }
@@ -266,7 +352,7 @@ export default function CraneProApp() {
       .eq('dispatch_id', job.id)
       .order('sort_order', { ascending: true });
 
-    const loaded = (data || []).map((d) => ({
+    const loaded: ExtraLine[] = (data || []).map((d) => ({
       id: d.id,
       item_name: d.item_name || '',
       quantity: Number(d.quantity ?? 1),
@@ -276,7 +362,7 @@ export default function CraneProApp() {
       notes: d.notes || '',
     }));
     while (loaded.length < 3) {
-      loaded.push({ item_name: '', quantity: 1, unit: '', unit_price: 0, amount: 0, notes: '' });
+      loaded.push({ id: undefined, item_name: '', quantity: 1, unit: '', unit_price: 0, amount: 0, notes: '' });
     }
     setExtras(loaded);
   };
@@ -300,7 +386,9 @@ export default function CraneProApp() {
       unit_price: selectedJob.unit_price,
       total_sales_amount: grandTotal > 0 ? grandTotal : selectedJob.unit_price,
       site_name: selectedJob.site_name,
+      site_code: selectedJob.site_code,
       site_address: selectedJob.site_address,
+      contact_code: selectedJob.contact_code,
       contact_name: selectedJob.contact_name,
       contact_tel: selectedJob.contact_tel,
       notes: selectedJob.notes,
@@ -342,21 +430,150 @@ export default function CraneProApp() {
   // フィルタリング集計
   const counts = {
     all: dispatches.length,
-    open: dispatches.filter((d) => !d.is_dispatched && !d.is_cancelled).length,
-    done: dispatches.filter((d) => d.is_dispatched && !d.is_cancelled).length,
+    open: dispatches.filter((d) => isUnassigned(d)).length,
+    done: dispatches.filter((d) => !d.is_cancelled && !isUnassigned(d)).length,
   };
 
   const filteredDispatches = dispatches.filter((d) => {
-    if (filter === 'open') return !d.is_dispatched && !d.is_cancelled;
-    if (filter === 'done') return d.is_dispatched && !d.is_cancelled;
+    if (filter === 'open') return isUnassigned(d);
+    if (filter === 'done') return !d.is_cancelled && !isUnassigned(d);
     return true;
   });
 
   const rokuyoLabel = getRokuyo(boardDate);
   const weekdayLabel = getWeekday(boardDate);
+  const relatedParty = (siteName: string, customerName: string) => {
+    if (sameParty(siteName, customerName)) return true;
+    const siteKey = partyKey(siteName);
+    const customerKey = partyKey(customerName);
+    if (siteKey.length < 6 || customerKey.length < 6) return false;
+    return siteKey.startsWith(customerKey) || customerKey.startsWith(siteKey);
+  };
+  const peopleFor = (code: string, name: string) =>
+    contacts.filter((person) => {
+      if (code && person.customer_code && sameCode(person.customer_code, code)) return true;
+      if (name && person.customer_name && sameParty(person.customer_name, name)) return true;
+      return false;
+    });
+  const siteChoices = (customerCode: string, customerName: string, typed: string): SuggestOption[] => {
+    const query = typed.trim();
+    const owned = sites.filter((site) => {
+      if (!site?.name || site.name === '名称未設定') return false;
+      const codeHit = Boolean(customerCode && site.customer_code && sameCode(site.customer_code, customerCode));
+      const nameHit = Boolean(customerName && site.customer_name && relatedParty(site.customer_name, customerName));
+      return codeHit || nameHit;
+    });
+    const hasCustomer = Boolean(customerCode || customerName);
+    let pool = hasCustomer ? owned : query ? sites : [];
+    if (query) {
+      pool = pool.filter((site) => `${site.name || ''} ${site.address || ''}`.includes(query));
+    }
+    return pool.slice(0, 40).map((site) => ({
+      id: site.id,
+      value: site.name,
+      hint: site.address || '',
+    }));
+  };
+  const commitSite = (row: DispatchRecord, value: string, site?: (typeof sites)[number]) => {
+    const customer = site?.customer_name
+      ? customers.find((item) => item.name === site.customer_name)
+      : undefined;
+    handleUpdateField(row.id, {
+      site_name: site?.name || value,
+      ...(site
+        ? {
+            site_code: site.code || '',
+            ...(site.customer_name ? { customer_name: site.customer_name } : {}),
+            ...(site.customer_code || customer?.code
+              ? { customer_code: site.customer_code || customer?.code || '' }
+              : {}),
+            ...(!row.entry_time && site.default_entry_time
+              ? { entry_time: toHalfwidthTime(site.default_entry_time) }
+              : {}),
+            ...(site.contact_name
+              ? { contact_name: site.contact_name, contact_tel: site.contact_tel || '', contact_code: '' }
+              : {}),
+          }
+        : value
+          ? { site_code: '' }
+          : { site_code: '' }),
+    });
+  };
+  function openPrint(kind: PrintKind, jobId = '') {
+    if (!boardDate) return;
+    setPrintRequest({ kind, jobId });
+  }
+
+  function contactChooser(
+    row: DispatchRecord,
+    onPick: (patch: Partial<DispatchRecord>) => void,
+    className = 'w-full h-8 px-2 text-xs font-bold bg-teal-50 outline-none'
+  ) {
+    const people = peopleFor(row.customer_code || '', row.customer_name || '');
+    const hasCustomer = Boolean(row.customer_name || row.customer_code);
+    if (!hasCustomer) {
+      return row.contact_name ? (
+        <div className="px-2.5 pb-1 text-[11px] font-bold text-teal-800">
+          {row.contact_name}
+          {row.contact_tel ? ` ${row.contact_tel}` : ''}
+        </div>
+      ) : null;
+    }
+    const known = people.some((person) => person.code === row.contact_code);
+    return (
+      <select
+        value={known ? row.contact_code : row.contact_name ? '__current__' : ''}
+        onChange={(event) => {
+          const next = event.target.value;
+          if (next === '__new__') {
+            setContactDraft({
+              rowId: row.id,
+              customerCode: row.customer_code || '',
+              customerName: row.customer_name || '',
+            });
+            return;
+          }
+          if (!next) {
+            onPick({ contact_code: '', contact_name: '', contact_tel: '' });
+            return;
+          }
+          if (next === '__current__') return;
+          const person = people.find((item) => item.code === next);
+          onPick({
+            contact_code: person?.code || '',
+            contact_name: person?.name || '',
+            contact_tel: person?.tel || '',
+          });
+        }}
+        className={className}
+      >
+        <option value="">担当者を選択</option>
+        {!known && row.contact_name ? (
+          <option value="__current__">
+            {row.contact_name}
+            {row.contact_tel ? ` ${row.contact_tel}` : ''}
+          </option>
+        ) : null}
+        {people.map((person) => (
+          <option key={person.id} value={person.code}>
+            {person.name} {person.tel}
+          </option>
+        ))}
+        <option value="__new__">新規登録</option>
+      </select>
+    );
+  }
+  const monthDays = useMemo(() => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(boardDate)) return [];
+    const year = Number(boardDate.slice(0, 4));
+    const month = Number(boardDate.slice(5, 7));
+    const last = new Date(year, month, 0).getDate();
+    return Array.from({ length: last }, (_, index) => `${boardDate.slice(0, 7)}-${String(index + 1).padStart(2, '0')}`);
+  }, [boardDate]);
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col md:flex-row font-sans">
+    <>
+    <div className={`min-h-screen bg-slate-100 text-slate-900 flex flex-col md:flex-row font-sans ${printRequest ? 'print:hidden' : ''}`}>
       {/* トースト通知 */}
       {toastMsg && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-5 py-3 rounded-full shadow-xl text-sm font-bold flex items-center gap-2 animate-fade-in">
@@ -365,57 +582,45 @@ export default function CraneProApp() {
         </div>
       )}
 
-      {/* 左サイドバー（PC用） */}
-      <aside className="hidden md:flex md:w-60 md:flex-col bg-[#121826] text-slate-100 p-4 shrink-0 sticky top-0 h-screen">
-        <div className="flex items-center gap-3 px-2 py-3 border-b border-slate-800">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-400 to-teal-600 flex items-center justify-center font-black text-slate-950 shadow">
-            CP
-          </div>
-          <div>
-            <div className="font-extrabold text-lg tracking-tight leading-none">クレーンPRO</div>
-            <div className="text-[11px] text-slate-400 mt-1">Next.js + Supabase Cloud</div>
-          </div>
-        </div>
+      <datalist id="operator-names">
+        {operators
+          .filter((op) => op.name)
+          .map((op) => (
+            <option key={op.id} value={op.name} />
+          ))}
+      </datalist>
+      <datalist id="customer-names">
+        {customers
+          .filter((customer) => customer.name)
+          .map((customer) => (
+            <option key={customer.id} value={customer.name} />
+          ))}
+      </datalist>
+      <datalist id="supplier-names">
+        {customers
+          .filter((customer) => customer.name && String(customer.partner_type || '').includes('仕入'))
+          .map((customer) => (
+            <option key={customer.id} value={customer.name} />
+          ))}
+      </datalist>
+      <datalist id="model-names">
+        {models
+          .filter((model) => model.name)
+          .map((model) => (
+            <option key={model.id} value={model.name} />
+          ))}
+      </datalist>
+      <datalist id="job-contacts">
+        {contacts
+          .filter((person) => person.name)
+          .map((person) => (
+            <option key={person.id} value={person.name}>
+              {person.tel}
+            </option>
+          ))}
+      </datalist>
 
-        <nav className="mt-6 flex-1 space-y-1">
-          <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl bg-teal-600/20 text-teal-300 font-bold text-sm">
-            <Calendar className="w-4 h-4" />
-            配車ボード
-          </button>
-          <button
-            onClick={() => showToast('請求書出力画面はステップ3で追加します')}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:bg-slate-800/70 font-medium text-sm transition"
-          >
-            <Receipt className="w-4 h-4" />
-            請求・締め集計
-          </button>
-          <button
-            onClick={() => showToast('マスタ管理画面はステップ3で追加します')}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:bg-slate-800/70 font-medium text-sm transition"
-          >
-            <Building2 className="w-4 h-4" />
-            取引先・現場マスタ
-          </button>
-          <button
-            onClick={() => showToast('車両・車検アラート画面はステップ3で追加します')}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:bg-slate-800/70 font-medium text-sm transition"
-          >
-            <Truck className="w-4 h-4" />
-            車両・オペレーター
-          </button>
-          <a
-            href="/import"
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-300 hover:bg-slate-800/70 font-medium text-sm transition"
-          >
-            <FileText className="w-4 h-4" />
-            マスタ一括取込
-          </a>
-        </nav>
-
-        <div className="p-3 rounded-xl bg-slate-800/60 text-xs text-slate-400 leading-relaxed">
-          入力内容はリアルタイムでクラウド（Supabase）へ自動保存されます。
-        </div>
-      </aside>
+      <AppSidebar active="board" />
 
       {/* メインコンテンツ */}
       <main className="flex-1 min-w-0 p-4 md:p-6 pb-24">
@@ -424,11 +629,13 @@ export default function CraneProApp() {
           <div>
             <h1 className="text-2xl md:text-3xl font-extrabold text-slate-900 tracking-tight">配車管理ボード</h1>
             <p className="text-xs md:text-sm text-slate-500 mt-0.5">
-              オペレーターと庸車は排他連動・作業時間は昼休憩1時間を自動控除します
+              オペレーター、得意先、現場、機種はマスタから選べます。作業時間は昼休憩1時間を自動控除します
             </p>
-            <a href="/import" className="md:hidden inline-flex mt-2 text-sm font-bold text-teal-800">
-              マスタ一括取込
-            </a>
+            {contactsLocked && (
+              <p className="mt-2 text-sm font-bold text-amber-800">
+                担当者マスタをまだ読めません。Supabase の SQL エディタで supabase/enable_master_access.sql を実行すると、得意先の担当者と携帯番号が出ます。
+              </p>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -449,11 +656,10 @@ export default function CraneProApp() {
               新規配車行追加
             </button>
             <button
-              onClick={() => window.print()}
+              onClick={() => openPrint('board')}
               className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white text-slate-700 border border-slate-300 font-bold text-sm hover:bg-slate-50 transition"
             >
-              <Printer className="w-4 h-4" />
-              印刷
+              配車表
             </button>
           </div>
         </div>
@@ -471,7 +677,7 @@ export default function CraneProApp() {
 
             <div className="flex items-baseline gap-3 px-4 py-2 rounded-xl bg-sky-50 border border-sky-200">
               <span className="text-2xl md:text-3xl font-black text-slate-900">
-                {formatJapaneseMonthDay(boardDate)}
+                {boardDate ? formatJapaneseMonthDay(boardDate) : '…'}
               </span>
               <span className="text-base md:text-lg font-bold text-sky-900">
                 （{weekdayLabel}）
@@ -517,6 +723,37 @@ export default function CraneProApp() {
           </div>
         </div>
 
+        {monthDays.length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-4">
+            {monthDays.map((day) => {
+              const count = monthCounts[day] ?? 0;
+              const active = day === boardDate;
+              const unassigned = active ? dispatches.some((row) => isUnassigned(row)) : Boolean(openDays[day]);
+              return (
+                <button
+                  key={day}
+                  type="button"
+                  onClick={() => setBoardDate(day)}
+                  className={`h-10 min-w-9 px-1.5 rounded-lg text-xs font-extrabold leading-none ${
+                    unassigned
+                      ? active
+                        ? 'bg-amber-400 text-amber-950 ring-2 ring-amber-700'
+                        : 'bg-amber-300 text-amber-950 border border-amber-500'
+                      : active
+                        ? 'bg-[#121826] text-white'
+                        : count
+                          ? 'bg-teal-50 text-teal-900 border border-teal-200'
+                          : 'bg-white text-slate-400 border border-slate-200'
+                  }`}
+                >
+                  <span className="block">{Number(day.slice(8))}</span>
+                  <span className="block text-[10px]">{count > 0 ? `${count}件` : ''}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {/* ステータス絞り込みタブ */}
         <div className="flex items-center gap-2 mb-4">
           {[
@@ -528,9 +765,13 @@ export default function CraneProApp() {
               key={tab.key}
               onClick={() => setFilter(tab.key as any)}
               className={`px-4 py-2 rounded-full text-sm font-bold transition ${
-                filter === tab.key
-                  ? 'bg-[#121826] text-white shadow-sm'
-                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                tab.key === 'open'
+                  ? filter === 'open'
+                    ? 'bg-amber-400 text-amber-950 shadow-sm'
+                    : 'bg-amber-100 text-amber-950 border border-amber-300'
+                  : filter === tab.key
+                    ? 'bg-[#121826] text-white shadow-sm'
+                    : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
               }`}
             >
               {tab.label}
@@ -545,7 +786,10 @@ export default function CraneProApp() {
           </div>
         ) : filteredDispatches.length === 0 ? (
           <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
-            <p className="text-slate-500 font-bold mb-4">この日の配車データはまだありません。</p>
+            <p className="text-slate-500 font-bold mb-4">
+              この日の配車はありません。
+              {Object.keys(openDays).length > 0 ? '黄色の日付は、オペレーターも庸車も空の配車がある日です。' : ''}
+            </p>
             <button
               onClick={handleAddRow}
               className="inline-flex items-center gap-1.5 px-5 py-3 rounded-xl bg-teal-700 text-white font-bold text-sm hover:bg-teal-800 transition"
@@ -558,20 +802,20 @@ export default function CraneProApp() {
           <>
             {/* PC用スプレッドシート風・高機能配車テーブル */}
             <div className="hidden lg:block bg-white rounded-2xl border border-slate-300 shadow-sm overflow-x-auto">
-              <table className="w-full border-collapse text-left">
+              <table className="w-full min-w-[1180px] border-collapse text-left">
                 <thead>
                   <tr className="bg-sky-100/80 border-b-2 border-sky-300 text-slate-800 text-xs font-extrabold">
-                    <th className="p-2.5 border-r border-slate-200 w-36">操作</th>
-                    <th className="p-2.5 border-r border-slate-200 w-36">オペレーター</th>
+                    <th className="p-2.5 border-r border-slate-200 w-28">操作</th>
+                    <th className="p-2.5 border-r border-slate-200 w-32">オペレーター</th>
                     <th className="p-2.5 border-r border-slate-200 w-40">庸車（仕入先）</th>
-                    <th className="p-2.5 border-r border-slate-200 w-48">得意先</th>
-                    <th className="p-2.5 border-r border-slate-200 w-56">現場名</th>
-                    <th className="p-2.5 border-r border-slate-200 w-36">受付機種</th>
-                    <th className="p-2.5 border-r border-slate-200 w-20 text-center">昼夜</th>
-                    <th className="p-2.5 border-r border-slate-200 w-24">入場</th>
-                    <th className="p-2.5 border-r border-slate-200 min-w-[160px]">備考</th>
-                    <th className="p-2.5 border-r border-slate-200 w-16 text-center">取消</th>
-                    <th className="p-2.5 w-14 text-center">削除</th>
+                    <th className="p-2.5 border-r border-slate-200 w-44">得意先</th>
+                    <th className="p-2.5 border-r border-slate-200 w-48">現場名</th>
+                    <th className="p-2.5 border-r border-slate-200 w-32">受付機種</th>
+                    <th className="p-2.5 border-r border-slate-200 w-16 text-center">昼夜</th>
+                    <th className="p-2.5 border-r border-slate-200 w-20">入場</th>
+                    <th className="p-2.5 border-r border-slate-200 w-36">備考</th>
+                    <th className="p-2.5 border-r border-slate-200 w-14 text-center">取消</th>
+                    <th className="p-2.5 w-12 text-center">削除</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 text-sm">
@@ -580,15 +824,18 @@ export default function CraneProApp() {
                     const hasSup = Boolean(row.supplier_name?.trim());
                     const badgeColor = getMachineBadgeColor(row.requested_model);
 
+                    const undispatched = isUnassigned(row);
                     return (
                       <tr
                         key={row.id}
                         className={`transition ${
                           row.is_cancelled
                             ? 'bg-rose-50/60 text-slate-400'
-                            : idx % 2 === 1
-                            ? 'bg-sky-50/30 hover:bg-teal-50/40'
-                            : 'bg-white hover:bg-teal-50/40'
+                            : undispatched
+                              ? 'bg-amber-100 hover:bg-amber-50'
+                              : idx % 2 === 1
+                                ? 'bg-sky-50/30 hover:bg-teal-50/40'
+                                : 'bg-white hover:bg-teal-50/40'
                         }`}
                       >
                         {/* 操作ボタン */}
@@ -617,14 +864,21 @@ export default function CraneProApp() {
                         <td className="p-0 border-r border-slate-200">
                           <input
                             type="text"
+                            list="operator-names"
+                            autoComplete="off"
                             disabled={hasSup && !hasOp}
                             value={row.operator_name || ''}
                             placeholder={hasSup ? '庸車指定中' : 'オペ入力'}
                             onChange={(e) => {
                               const val = e.target.value;
+                              const hit = operators.find((op) => op.name === val);
                               handleUpdateField(row.id, {
                                 operator_name: val,
-                                ...(val ? { supplier_name: '', supplier_code: '' } : {}),
+                                ...(hit
+                                  ? { operator_code: hit.code || '', supplier_name: '', supplier_code: '' }
+                                  : val
+                                    ? { supplier_name: '', supplier_code: '' }
+                                    : { operator_code: '' }),
                               });
                             }}
                             className="w-full h-11 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none disabled:bg-slate-100 disabled:text-slate-400"
@@ -635,14 +889,24 @@ export default function CraneProApp() {
                         <td className="p-0 border-r border-slate-200">
                           <input
                             type="text"
+                            list="supplier-names"
+                            autoComplete="off"
                             disabled={hasOp && !hasSup}
                             value={row.supplier_name || ''}
                             placeholder={hasOp ? '自社オペ中' : '庸車先入力'}
                             onChange={(e) => {
                               const val = e.target.value;
+                              const hit = customers.find(
+                                (customer) =>
+                                  customer.name === val && String(customer.partner_type || '').includes('仕入')
+                              );
                               handleUpdateField(row.id, {
                                 supplier_name: val,
-                                ...(val ? { operator_name: '', operator_code: '' } : {}),
+                                ...(hit
+                                  ? { supplier_code: hit.code || '', operator_name: '', operator_code: '' }
+                                  : val
+                                    ? { operator_name: '', operator_code: '' }
+                                    : { supplier_code: '' }),
                               });
                             }}
                             className="w-full h-11 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none disabled:bg-slate-100 disabled:text-slate-400"
@@ -651,34 +915,95 @@ export default function CraneProApp() {
 
                         {/* 得意先 */}
                         <td className="p-0 border-r border-slate-200">
-                          <input
-                            type="text"
-                            value={row.customer_name || ''}
-                            placeholder="得意先名"
-                            onChange={(e) =>
-                              handleUpdateField(row.id, { customer_name: e.target.value })
-                            }
-                            className="w-full h-11 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none"
-                          />
+                          <div className="flex items-center">
+                            <input
+                              type="text"
+                              list="customer-names"
+                              value={row.customer_name || ''}
+                              placeholder="得意先名"
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                const hit = customers.find((customer) => customer.name === val);
+                                if (!hit) {
+                                  handleUpdateField(row.id, {
+                                    customer_name: val,
+                                    ...(val ? {} : { customer_code: '', contact_code: '', contact_name: '', contact_tel: '' }),
+                                  });
+                                  return;
+                                }
+                                const people = peopleFor(hit.code || '', hit.name || '');
+                                const only = people.length === 1 ? people[0] : null;
+                                const changed = (hit.code || '') !== (row.customer_code || '');
+                                handleUpdateField(row.id, {
+                                  customer_name: val,
+                                  customer_code: hit.code || '',
+                                  ...(changed
+                                    ? {
+                                        site_code: '',
+                                        site_name: '',
+                                        contact_code: only?.code || '',
+                                        contact_name: only?.name || '',
+                                        contact_tel: only?.tel || '',
+                                      }
+                                    : only && !row.contact_name
+                                      ? { contact_code: only.code, contact_name: only.name, contact_tel: only.tel }
+                                      : {}),
+                                });
+                              }}
+                              className="w-full h-11 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none"
+                              autoComplete="off"
+                            />
+                          </div>
+                          {contactChooser(row, (patch) => handleUpdateField(row.id, patch))}
                         </td>
 
                         {/* 現場名 */}
                         <td className="p-0 border-r border-slate-200">
-                          <input
-                            type="text"
-                            value={row.site_name || ''}
-                            placeholder="現場名"
-                            onChange={(e) =>
-                              handleUpdateField(row.id, { site_name: e.target.value })
-                            }
-                            className="w-full h-11 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none"
-                          />
+                          <div className="flex items-center">
+                            <SuggestInput
+                              value={row.site_name || ''}
+                              placeholder="現場名"
+                              options={siteChoices(row.customer_code || '', row.customer_name || '', row.site_name || '')}
+                              onChange={(val) => {
+                                const hit = sites.find(
+                                  (site) =>
+                                    site.name === val &&
+                                    (!row.customer_code || !site.customer_code || site.customer_code === row.customer_code)
+                                );
+                                commitSite(row, val, hit);
+                              }}
+                              onPick={(option) => {
+                                const hit = sites.find((site) => site.id === option.id);
+                                commitSite(row, hit?.name || option.value, hit);
+                              }}
+                              className="w-full h-11 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none"
+                            />
+                            {row.site_name && !sites.some((site) => site.name === row.site_name) && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setSiteDraft({
+                                    rowId: row.id,
+                                    name: row.site_name,
+                                    customerCode: row.customer_code || '',
+                                    customerName: row.customer_name || '',
+                                    entryTime: row.entry_time || '',
+                                  })
+                                }
+                                className="shrink-0 h-11 px-2 text-[11px] font-extrabold text-teal-800 hover:bg-teal-50"
+                              >
+                                登録
+                              </button>
+                            )}
+                          </div>
                         </td>
 
                         {/* 受付機種 */}
                         <td className="p-1 border-r border-slate-200">
                           <input
                             type="text"
+                            list="model-names"
+                            autoComplete="off"
                             value={row.requested_model || ''}
                             placeholder="機種"
                             onChange={(e) =>
@@ -765,7 +1090,9 @@ export default function CraneProApp() {
                   className={`rounded-2xl border p-4 shadow-sm ${
                     row.is_cancelled
                       ? 'bg-rose-50/70 border-rose-200'
-                      : 'bg-white border-slate-200'
+                      : isUnassigned(row)
+                        ? 'bg-amber-100 border-amber-300'
+                        : 'bg-white border-slate-200'
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2 mb-2">
@@ -798,6 +1125,12 @@ export default function CraneProApp() {
                   <div className="text-sm font-bold text-slate-600 mt-0.5">
                     {row.customer_name || '（得意先未入力）'}
                   </div>
+                  {row.contact_name && (
+                    <div className="text-sm font-bold text-teal-800 mt-0.5">
+                      担当 {row.contact_name}
+                      {row.contact_tel ? ` ${row.contact_tel}` : ''}
+                    </div>
+                  )}
 
                   <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-sm">
                     <div className="font-bold text-slate-800">
@@ -830,6 +1163,63 @@ export default function CraneProApp() {
       </main>
 
       {/* 詳細・売上・庸車・作業指示モーダル */}
+      {siteDraft && companyId && (
+        <SiteRegisterDialog
+          companyId={companyId}
+          draft={siteDraft}
+          onClose={() => setSiteDraft(null)}
+          onCreated={(site) => {
+            setSites((current) =>
+              [...current, site].sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'))
+            );
+            handleUpdateField(siteDraft.rowId, {
+              site_code: site.code,
+              site_name: site.name,
+              ...(site.customer_name ? { customer_name: site.customer_name } : {}),
+              ...(site.customer_code ? { customer_code: site.customer_code } : {}),
+              ...(site.default_entry_time ? { entry_time: toHalfwidthTime(site.default_entry_time) } : {}),
+              ...(site.contact_name
+                ? { contact_name: site.contact_name, contact_tel: site.contact_tel, contact_code: '' }
+                : {}),
+            });
+            setSelectedJob((current) =>
+              current && current.id === siteDraft.rowId
+                ? {
+                    ...current,
+                    site_code: site.code,
+                    site_name: site.name,
+                    ...(site.contact_name ? { contact_name: site.contact_name, contact_tel: site.contact_tel } : {}),
+                  }
+                : current
+            );
+            setSiteDraft(null);
+            showToast(`現場コード ${site.code} を登録しました`);
+          }}
+        />
+      )}
+      {contactDraft && companyId && (
+        <ContactRegisterDialog
+          companyId={companyId}
+          draft={contactDraft}
+          onClose={() => setContactDraft(null)}
+          onCreated={(contact) => {
+            setContacts((current) => [...current, contact]);
+            handleUpdateField(contactDraft.rowId, {
+              contact_code: contact.code,
+              contact_name: contact.name,
+              contact_tel: contact.tel,
+            });
+            setSelectedJob((current) =>
+              current && current.id === contactDraft.rowId
+                ? { ...current, contact_code: contact.code, contact_name: contact.name, contact_tel: contact.tel }
+                : current
+            );
+            setContactDraft(null);
+            showToast(`担当者コード ${contact.code} を登録しました`);
+          }}
+        />
+      )}
+
       {selectedJob && (
         <div className="fixed inset-0 z-40 bg-slate-950/50 backdrop-blur-xs flex items-center justify-center p-3 md:p-6">
           <div className="bg-slate-50 w-full max-w-4xl max-h-[92vh] rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
@@ -1005,7 +1395,7 @@ export default function CraneProApp() {
                         onClick={() =>
                           setExtras([
                             ...extras,
-                            { item_name: '', quantity: 1, unit: '', unit_price: 0, amount: 0, notes: '' },
+                            { id: undefined, item_name: '', quantity: 1, unit: '', unit_price: 0, amount: 0, notes: '' },
                           ])
                         }
                         className="text-xs font-bold text-teal-700 hover:underline"
@@ -1079,7 +1469,16 @@ export default function CraneProApp() {
 
               {jobTab === 'hire' && (
                 <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-4">
-                  <h3 className="font-extrabold text-sm text-slate-800">日程変更・現場連絡先・客先設定</h3>
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="font-extrabold text-sm text-slate-800">日程変更・現場連絡先・客先設定</h3>
+                    <button
+                      type="button"
+                      onClick={() => openPrint('request', selectedJob.id)}
+                      className="h-9 px-3 rounded-lg border border-slate-300 text-xs font-extrabold"
+                    >
+                      この行の配車依頼書
+                    </button>
+                  </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-bold text-slate-600 mb-1">作業日（日付変更）</label>
@@ -1098,21 +1497,55 @@ export default function CraneProApp() {
                         type="text"
                         value={selectedJob.entry_time || ''}
                         onChange={(e) =>
-                          setSelectedJob({ ...selectedJob, entry_time: e.target.value })
+                          setSelectedJob({ ...selectedJob, entry_time: toHalfwidthTime(e.target.value) })
                         }
                         className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold"
                       />
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-slate-600 mb-1">現場名</label>
-                      <input
-                        type="text"
+                      <SuggestInput
                         value={selectedJob.site_name || ''}
-                        onChange={(e) =>
-                          setSelectedJob({ ...selectedJob, site_name: e.target.value })
-                        }
+                        placeholder="現場名"
+                        options={siteChoices(
+                          selectedJob.customer_code || '',
+                          selectedJob.customer_name || '',
+                          selectedJob.site_name || ''
+                        )}
+                        onChange={(val) => setSelectedJob({ ...selectedJob, site_name: val })}
+                        onPick={(option) => {
+                          const hit = sites.find((site) => site.id === option.id);
+                          setSelectedJob({
+                            ...selectedJob,
+                            site_name: hit?.name || option.value,
+                            ...(hit
+                              ? {
+                                  site_code: hit.code || '',
+                                  ...(hit.customer_name ? { customer_name: hit.customer_name } : {}),
+                                  ...(hit.customer_code ? { customer_code: hit.customer_code } : {}),
+                                }
+                              : {}),
+                          });
+                        }}
                         className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold"
                       />
+                      {selectedJob.site_name && !sites.some((site) => site.name === selectedJob.site_name) && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setSiteDraft({
+                              rowId: selectedJob.id,
+                              name: selectedJob.site_name,
+                              customerCode: selectedJob.customer_code || '',
+                              customerName: selectedJob.customer_name || '',
+                              entryTime: selectedJob.entry_time || '',
+                            })
+                          }
+                          className="mt-2 h-9 px-3 rounded-lg bg-teal-50 text-teal-900 text-xs font-extrabold"
+                        >
+                          この現場をマスタに登録
+                        </button>
+                      )}
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-slate-600 mb-1">現場住所</label>
@@ -1127,14 +1560,11 @@ export default function CraneProApp() {
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-slate-600 mb-1">現場担当者</label>
-                      <input
-                        type="text"
-                        value={selectedJob.contact_name || ''}
-                        onChange={(e) =>
-                          setSelectedJob({ ...selectedJob, contact_name: e.target.value })
-                        }
-                        className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold"
-                      />
+                      {contactChooser(
+                        selectedJob,
+                        (patch) => setSelectedJob({ ...selectedJob, ...patch }),
+                        'w-full h-11 px-3 rounded-xl border border-slate-300 font-bold bg-white'
+                      )}
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-slate-600 mb-1">担当者携帯TEL</label>
@@ -1166,7 +1596,16 @@ export default function CraneProApp() {
 
               {jobTab === 'operator' && (
                 <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-4">
-                  <h3 className="font-extrabold text-sm text-slate-800">オペレーター作業指示内容</h3>
+                  <div className="flex items-center justify-between gap-3">
+                    <h3 className="font-extrabold text-sm text-slate-800">オペレーター作業指示内容</h3>
+                    <button
+                      type="button"
+                      onClick={() => openPrint('instruction', selectedJob.id)}
+                      className="h-9 px-3 rounded-lg border border-slate-300 text-xs font-extrabold"
+                    >
+                      この行の作業指示書
+                    </button>
+                  </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-bold text-slate-600 mb-1">作業場所</label>
@@ -1227,5 +1666,33 @@ export default function CraneProApp() {
         </div>
       )}
     </div>
+    {printRequest && (
+      <PrintPreview
+        kind={printRequest.kind}
+        date={
+          (printRequest.jobId
+            ? (selectedJob?.id === printRequest.jobId ? selectedJob.work_date : dispatches.find((row) => row.id === printRequest.jobId)?.work_date)
+            : boardDate) || boardDate
+        }
+        jobs={
+          printRequest.jobId
+            ? [
+                selectedJob?.id === printRequest.jobId
+                  ? selectedJob
+                  : dispatches.find((row) => row.id === printRequest.jobId),
+              ].filter((row): row is DispatchRecord => Boolean(row))
+            : printRequest.kind === 'board'
+              ? dispatches
+              : dispatches.filter((row) => !row.is_cancelled)
+        }
+        sites={sites.map((site) => ({
+          code: site.code || '',
+          name: site.name || '',
+          address: site.address || '',
+        }))}
+        onClose={() => setPrintRequest(null)}
+      />
+    )}
+    </>
   );
 }

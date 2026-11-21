@@ -17,7 +17,9 @@ type CommitResult = {
   label: string;
   saved: number;
   skippedNoCode: number;
+  skippedNoName?: number;
   duplicateCodes: number;
+  warnings?: string[];
   error?: string;
 };
 
@@ -56,7 +58,7 @@ export default function ImportClient() {
     return () => {
       cancelled = true;
     };
-  }, [results]);
+  }, []);
 
   const importableSheets = useMemo(
     () => (preview?.sheets ?? []).filter(isImportable),
@@ -104,7 +106,13 @@ export default function ImportClient() {
     const response = await fetch('/api/import/commit', { method: 'POST', body: form });
     const body = await response.json();
     setBusy(null);
-    if (body.needsGrant) setStatus((current) => ({ ...(current ?? { ok: false }), ok: false }));
+    if (body.needsGrant) {
+      setStatus({
+        ok: false,
+        message: body.error,
+        sql: body.sql,
+      });
+    }
     if (!response.ok && !body.results) {
       setMessage(body.error || '取り込みに失敗しました');
       return;
@@ -143,8 +151,9 @@ export default function ImportClient() {
         <div>
           <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">マスタ一括取込</h1>
           <p className="text-sm text-slate-600 mt-1 leading-relaxed">
-            取引先・現場・オペレータ・機種・商品の CSV または Excel を取り込みます。
-            クレーンPRO.xlsx の「取引先マスタ」「現場マスタ」「オペレータマスタ」「機種マスタ」「商品マスタ」を自動で判別し、同じコードは更新、新しいコードは追加します。
+            取引先・現場・担当者・オペレータ・機種・商品の CSV または Excel を取り込みます。
+            クレーンPRO.xlsx の各マスタシートを自動で判別し、同じコードは更新、新しいコードは追加します。
+            一覧表示はファイルの中身で、実行して保存できた件数だけがテーブルに入ります。
           </p>
         </div>
 
@@ -153,11 +162,18 @@ export default function ImportClient() {
             <div className="flex items-start gap-2">
               <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
               <div className="min-w-0">
-                <h2 className="font-extrabold text-amber-950">Supabase の権限がまだありません</h2>
+                <h2 className="font-extrabold text-amber-950">Supabase への書き込み権限がありません</h2>
                 <p className="text-sm text-amber-950 mt-1 leading-relaxed">
-                  公開キーではマスタを読めません。Supabase の SQL Editor で
-                  <code className="mx-1 px-1.5 py-0.5 rounded bg-white border border-amber-200">supabase/enable_master_access.sql</code>
-                  を1回実行してから、取り込みを始めてください。
+                  プレビューはファイルの中身を表示しているだけで、まだテーブルには入りません。下の SQL をコピーし、
+                  <a
+                    href="https://supabase.com/dashboard/project/mwdncojkmjewgiqkyllc/sql/new"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mx-1 font-extrabold underline"
+                  >
+                    Supabase の SQL Editor
+                  </a>
+                  に貼って Run を1回押してください。そのあと、この画面で取り込みをやり直します。
                 </p>
                 {status.message && (
                   <p className="text-xs text-amber-800 mt-2 break-all">{status.message}</p>
@@ -185,7 +201,7 @@ export default function ImportClient() {
           <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-slate-300 rounded-2xl px-4 py-8 text-center cursor-pointer hover:border-teal-600 hover:bg-teal-50/40">
             <Upload className="w-7 h-7 text-teal-700" />
             <span className="font-extrabold">CSV または Excel（.xlsx）を選択</span>
-            <span className="text-xs text-slate-500">複数シートの Excel からは、5つのマスタシートだけを取り込みます</span>
+            <span className="text-xs text-slate-500">複数シートの Excel からは、取引先・現場・担当者・オペレータ・機種・商品を取り込みます</span>
             <input
               type="file"
               accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -252,6 +268,7 @@ export default function ImportClient() {
                     <p className="text-sm font-bold text-slate-700">
                       取込 {sheet.importable.toLocaleString()}件
                       {sheet.skippedNoCode > 0 && ` / コードなし ${sheet.skippedNoCode}件`}
+                      {sheet.skippedNoName > 0 && ` / 名称なし ${sheet.skippedNoName}件は除外`}
                       {sheet.duplicateCodes > 0 && ` / ファイル内の重複 ${sheet.duplicateCodes}件は後の行を採用`}
                     </p>
                   )}
@@ -304,7 +321,11 @@ export default function ImportClient() {
         {results && (
           <section className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
             <h2 className="font-extrabold flex items-center gap-2">
-              <CheckCircle2 className="w-5 h-5 text-teal-700" />
+              {results.some((result) => result.error) ? (
+                <AlertTriangle className="w-5 h-5 text-rose-700" />
+              ) : (
+                <CheckCircle2 className="w-5 h-5 text-teal-700" />
+              )}
               取り込み結果
             </h2>
             <ul className="mt-3 space-y-2">
@@ -312,6 +333,11 @@ export default function ImportClient() {
                 <li key={result.table} className="text-sm">
                   <span className="font-extrabold">{result.label}</span>
                   <span className="ml-2">{result.saved.toLocaleString()}件を保存</span>
+                  {result.warnings?.slice(0, 2).map((warning) => (
+                    <span key={warning} className="block text-amber-800 mt-1">
+                      {warning}
+                    </span>
+                  ))}
                   {result.error && <span className="block text-rose-700 font-bold mt-1">{result.error}</span>}
                 </li>
               ))}
