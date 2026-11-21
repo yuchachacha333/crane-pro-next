@@ -140,6 +140,7 @@ export default function CraneProApp() {
   const [contactsLocked, setContactsLocked] = useState(false);
   const [siteDraft, setSiteDraft] = useState<SiteDraft | null>(null);
   const [contactDraft, setContactDraft] = useState<ContactDraft | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -1108,17 +1109,48 @@ export default function CraneProApp() {
                         {row.requested_model || '機種未定'}
                       </span>
                       <span className="ml-2 text-xs font-bold text-slate-600">
-                        入場 {row.entry_time || '未定'}（{row.shift_type || '昼'}）
+                        入場 {toHalfwidthTime(row.entry_time) || '未定'}（{row.shift_type || '昼'}）
                       </span>
                     </div>
-                    <button
-                      onClick={() => openJobModal(row)}
-                      className="px-3 py-1.5 rounded-xl bg-teal-700 text-white font-bold text-xs shadow-sm"
-                    >
-                      詳細・売上
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setEditingId(editingId === row.id ? null : row.id)}
+                        className="px-3 py-1.5 rounded-xl bg-white text-slate-800 border border-slate-300 font-bold text-xs"
+                      >
+                        {editingId === row.id ? '閉じる' : '編集'}
+                      </button>
+                      <button
+                        onClick={() => openJobModal(row)}
+                        className="px-3 py-1.5 rounded-xl bg-teal-700 text-white font-bold text-xs shadow-sm"
+                      >
+                        詳細・売上
+                      </button>
+                    </div>
                   </div>
 
+                  {editingId !== row.id && (
+                    <div>
+                      <div className="font-extrabold text-lg text-slate-900">{row.site_name || '（現場名未入力）'}</div>
+                      <div className="text-sm font-bold text-slate-600 mt-0.5">{row.customer_name || '（得意先未入力）'}</div>
+                      {row.contact_name && (
+                        <div className="text-sm font-bold text-teal-800 mt-0.5">
+                          担当 {row.contact_name}
+                          {row.contact_tel ? ` ${row.contact_tel}` : ''}
+                        </div>
+                      )}
+                      <div className="mt-2 text-sm font-bold text-slate-800">
+                        {row.operator_name
+                          ? `オペ: ${row.operator_name}`
+                          : row.supplier_name
+                            ? `庸車: ${row.supplier_name}`
+                            : 'オペ・庸車 未割当'}
+                        {row.is_cancelled ? ' / 取消' : ''}
+                      </div>
+                    </div>
+                  )}
+
+                  {editingId === row.id && (
                   <div className="space-y-2">
                     <label className="block">
                       <span className="text-[11px] font-extrabold text-slate-500">配車先（現場）</span>
@@ -1235,7 +1267,62 @@ export default function CraneProApp() {
                         />
                       </label>
                     </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="block">
+                        <span className="text-[11px] font-extrabold text-slate-500">入場時間</span>
+                        <input
+                          type="text"
+                          value={row.entry_time || ''}
+                          placeholder="8:00"
+                          onChange={(e) => handleUpdateField(row.id, { entry_time: e.target.value })}
+                          className={fieldClass}
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="text-[11px] font-extrabold text-slate-500">時間帯</span>
+                        <select
+                          value={row.shift_type || '昼'}
+                          onChange={(e) => handleUpdateField(row.id, { shift_type: e.target.value })}
+                          className={fieldClass}
+                        >
+                          <option value="昼">昼</option>
+                          <option value="夜">夜</option>
+                        </select>
+                      </label>
+                    </div>
+                    <label className="block">
+                      <span className="text-[11px] font-extrabold text-slate-500">受付機種</span>
+                      <input
+                        type="text"
+                        list="model-names"
+                        autoComplete="off"
+                        value={row.requested_model || ''}
+                        placeholder="機種"
+                        onChange={(e) => handleUpdateField(row.id, { requested_model: e.target.value })}
+                        className={fieldClass}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-[11px] font-extrabold text-slate-500">備考</span>
+                      <input
+                        type="text"
+                        value={row.notes || ''}
+                        placeholder="備考"
+                        onChange={(e) => handleUpdateField(row.id, { notes: e.target.value })}
+                        className={fieldClass}
+                      />
+                    </label>
+                    <label className="flex items-center gap-2 text-sm font-bold text-rose-700">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(row.is_cancelled)}
+                        onChange={(e) => handleUpdateField(row.id, { is_cancelled: e.target.checked })}
+                        className="w-4 h-4 accent-rose-600"
+                      />
+                      この配車を取り消す
+                    </label>
                   </div>
+                  )}
 
                   <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-end text-sm">
                     <div className="flex items-center gap-2">
