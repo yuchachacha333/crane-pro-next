@@ -95,6 +95,15 @@ export function fillInvoiceLayout(
         .replaceAll('{{企業名}}', customer.name || '');
     }
   }
+  // 発行日（タイトル「請求書」の下の日付欄が空なら、今日の日付を入れる）
+  {
+    const dateRow = layout.rows[2];
+    if (dateRow && dateRow.cells[5] && !String(dateRow.cells[5].text || '').trim()) {
+      const now = new Date();
+      dateRow.cells[5].text = [now.getFullYear() + '年', now.getMonth() + 1 + '月', now.getDate() + '日'].join('');
+      dateRow.cells[5].align = 'center';
+    }
+  }
   let headerIndex = -1;
   let roles: Record<string, number> | null = null;
   layout.rows.some((row, index) => {

@@ -81,7 +81,7 @@ export default function SuggestInput({
           value={value}
           placeholder={placeholder || 'タップして選ぶ'}
           onClick={() => setSheet(true)}
-          className={` cursor-pointer`}
+          className={`${className || ''} cursor-pointer`}
         />
         {sheet && (
           <PickerSheet

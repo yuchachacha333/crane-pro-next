@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import type { SheetCell, SheetEdges, SheetLayout } from '@/lib/sheet-layout';
 import { getRokuyo, getTodayIso, getWeekday } from '@/lib/crane-utils';
 import { toHalfwidthTime } from '@/lib/time-text';
@@ -251,6 +251,38 @@ function FormPage({
   const widths = layout.cols || [];
   const total = widths.reduce((sum, width) => sum + Number(width || 0), 0) || 1;
   const margin = layout.margin || { top: 12, right: 10, bottom: 12, left: 10 };
+  const wrap = useRef<HTMLDivElement>(null);
+  const [boxes, setBoxes] = useState<Record<number, { top: number; height: number }>>({});
+  useLayoutEffect(() => {
+    const root = wrap.current;
+    if (!root) return;
+    const measure = () => {
+      const trs = root.querySelectorAll('tbody > tr');
+      const next: Record<number, { top: number; height: number }> = {};
+      (layout.drawings || []).forEach((d, i) => {
+        const at = (row: number, off: number) => {
+          const tr = trs[row] as HTMLElement | undefined;
+          if (!tr) return null;
+          const nominal = (layout.rows[row]?.height || layout.defaultRowHeight || 18) * 12700;
+          return tr.offsetTop + Math.min(1, Math.max(0, off / nominal)) * tr.offsetHeight;
+        };
+        const top = at(d.r1, d.ro1);
+        const bottom = at(d.r2, d.ro2);
+        if (top != null && bottom != null) next[i] = { top, height: Math.max(0, bottom - top) };
+      });
+      setBoxes(next);
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    document.fonts?.ready.then(measure);
+    const table = root.querySelector('table');
+    const observer = table && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    if (table && observer) observer.observe(table);
+    return () => {
+      window.removeEventListener('resize', measure);
+      observer?.disconnect();
+    };
+  }, [layout]);
   return (
     <article
       className="dispatch-page"
@@ -267,7 +299,7 @@ function FormPage({
         fontFamily: '"Yu Gothic","Yu Gothic UI","Hiragino Sans",Meiryo,sans-serif',
       }}
     >
-      <div style={{ position: 'relative' }}>
+      <div ref={wrap} style={{ position: 'relative' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', overflow: 'visible' }}>
         <colgroup>
           {widths.map((width, index) => (
@@ -276,13 +308,15 @@ function FormPage({
         </colgroup>
         <tbody>
           {layout.rows.map((row, index) => (
-            <tr key={row.n} style={row.height ? { height: `${(Number(row.height) * scale) / 100}pt` } : undefined}>
+            <tr key={row.n} data-row={index} style={rowHeight(row.height, raw ? layout.defaultRowHeight : 0, scale)}>
               {row.cells.map((cell, col) => {
                 if (cover[`${index}:${col}`]) return null;
                 const merge = span[`${index}:${col}`];
                 const edges = merge ? outerEdges(layout, merge) : formEdges(cell);
                 let text = raw ? cell.text || '' : fillText(cell.text || '', values);
                 if (!raw && /^\d{4}年\d{1,2}月\d{1,2}日/.test(text)) text = today;
+                // 罫線のある表のマス目だけ切り詰め、罫線のない文章（振込先・会社情報など）は折り返し／はみ出して表示する
+                const clipCell = clip && Boolean(edges.left || edges.right || edges.top || edges.bottom);
                 const flow = cell.wrap
                   ? { whiteSpace: 'pre-wrap' as const, wordBreak: 'break-word' as const }
                   : { whiteSpace: 'pre' as const, overflow: 'visible', wordBreak: 'normal' as const };
@@ -298,13 +332,22 @@ function FormPage({
                       borderTop: edgeWidth(edges.top),
                       borderBottom: edgeWidth(edges.bottom),
                       ...flow,
-                      position: !clip && text && !cell.wrap ? 'relative' : undefined,
-                      overflow: clip ? 'hidden' : text && !cell.wrap ? 'visible' : undefined,
-                      whiteSpace: clip ? 'nowrap' : flow.whiteSpace,
-                      textOverflow: clip ? 'clip' : undefined,
+                      ...(cell.fill ? { background: cell.fill } : {}),
+                      ...(cell.color ? { color: cell.color } : {}),
+                      ...(cell.diag
+                        ? {
+                            backgroundImage: 'linear-gradient(to top right, transparent calc(50% - 0.5px), #000 calc(50% - 0.5px), #000 calc(50% + 0.5px), transparent calc(50% + 0.5px))',
+                          }
+                        : {}),
+                      WebkitPrintColorAdjust: 'exact',
+                      printColorAdjust: 'exact',
+                      position: !clipCell && text && !cell.wrap ? 'relative' : undefined,
+                      overflow: clipCell ? 'hidden' : text && !cell.wrap ? 'visible' : undefined,
+                      whiteSpace: clipCell ? 'nowrap' : flow.whiteSpace,
+                      textOverflow: clipCell ? 'clip' : undefined,
                     }}
                   >
-                    {clip ? text : <SheetSpill cell={cell} text={text} />}
+                    {clipCell ? text : <SheetSpill cell={cell} text={text} />}
                   </td>
                 );
               })}
@@ -317,8 +360,8 @@ function FormPage({
           position: 'absolute',
           left: `${item.x * 100}%`,
           width: `${item.w * 100}%`,
-          top: `${(item.y * scale) / 100}pt`,
-          height: `${(item.h * scale) / 100}pt`,
+          top: boxes[index] ? `${boxes[index].top}px` : `${(item.y * scale) / 100}pt`,
+          height: boxes[index] ? `${boxes[index].height}px` : `${(item.h * scale) / 100}pt`,
           pointerEvents: 'none',
         };
         if (item.kind === 'image') {
@@ -433,7 +476,7 @@ function BoardPage({ layout, jobs, date }: { layout: SheetLayout; jobs: PrintJob
                 col += span - 1;
               }
               return (
-                <tr key={row.n} style={row.height ? { height: `${(Number(row.height) * scale) / 100}pt` } : undefined}>
+                <tr key={row.n} data-row={index} style={rowHeight(row.height, 0, scale)}>
                   {drawn.map((item, col) => {
                     const tone = data && item.field === 'customer' ? customerTone(item.text) : '';
                     return (
@@ -611,4 +654,9 @@ export default function PrintPreview({
       </div>
     </div>
   );
+}
+
+function rowHeight(height: unknown, fallback: unknown, scale: number): CSSProperties | undefined {
+  const h = Number(height) || Number(fallback) || 0;
+  return h ? { height: `${(h * scale) / 100}pt` } : undefined;
 }

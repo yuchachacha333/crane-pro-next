@@ -128,7 +128,7 @@ export default function SalesClient() {
       let key: string;
       let name: string;
       if (view === 'customer') {
-        key = row.customer_code || row.customer_name || '';
+        key = row.customer_name || row.customer_code || '';
         name = row.customer_name || '得意先未入力';
       } else if (view === 'supplier') {
         if (!(row.supplier_name || '').trim()) continue;
@@ -196,7 +196,7 @@ export default function SalesClient() {
           {[
             { label: '売上合計', value: money(totals.sales), sub: `${totals.count}件` },
             { label: 'うち付帯売上', value: money(totals.extra), sub: '' },
-            { label: '外注への支払', value: money(totals.cost), sub: totals.costMissing ? `仕入金額 未入力 ${totals.costMissing}件` : '' },
+            { label: '外注への支払', value: money(totals.cost), sub: totals.costMissing ? `仕入額が未設定の外注 ${totals.costMissing}件` : '' },
             { label: '粗利', value: money(gross), sub: '売上 − 外注支払' },
             { label: '粗利率', value: totals.sales ? `${Math.round((gross / totals.sales) * 1000) / 10}%` : '—', sub: '' },
           ].map((card) => (
@@ -265,7 +265,7 @@ export default function SalesClient() {
                         {view !== 'model' && (
                           <td className={`${td} text-right font-bold`}>
                             {g.cost ? money(g.cost) : '—'}
-                            {g.costMissing > 0 && <span className="ml-1 text-xs text-rose-700">未入力{g.costMissing}</span>}
+                            {g.costMissing > 0 && <span className="ml-1 text-xs text-amber-800">仕入額未設定{g.costMissing}件</span>}
                           </td>
                         )}
                         {view !== 'model' && (
@@ -277,51 +277,46 @@ export default function SalesClient() {
                           </div>
                         </td>
                       </tr>
-                      {isOpen && (
-                        <tr className="bg-slate-50">
-                          <td colSpan={view === 'model' ? 5 : 7} className="p-0">
-                            <table className="w-full border-collapse text-sm">
-                              <thead>
-                                <tr className="text-left text-slate-700">
-                                  <th className="px-4 py-1.5 font-extrabold">作業日</th>
-                                  <th className="px-3 py-1.5 font-extrabold">{view === 'customer' ? '機種' : '得意先'}</th>
-                                  <th className="px-3 py-1.5 font-extrabold">現場名</th>
-                                  <th className="px-3 py-1.5 text-right font-extrabold">売上</th>
-                                  <th className="px-3 py-1.5 text-right font-extrabold">付帯</th>
-                                  {view !== 'model' && <th className="px-3 py-1.5 text-right font-extrabold">{view === 'customer' ? '外注' : '仕入金額'}</th>}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {g.rows.map((r) => (
-                                  <tr key={r.id} className="border-t border-slate-200">
-                                    <td className="px-4 py-1.5 font-bold whitespace-nowrap">{formatJapaneseMonthDay(r.work_date)}</td>
-                                    <td className="px-3 py-1.5 font-bold">{view === 'customer' ? r.requested_model || '—' : r.customer_name || '—'}</td>
-                                    <td className="px-3 py-1.5 font-bold">{r.site_name || '—'}</td>
-                                    <td className="px-3 py-1.5 text-right font-black whitespace-nowrap">
-                                      {r.base == null && !r.extraTotal ? '未入力' : money(r.amount)}
-                                    </td>
-                                    <td className="px-3 py-1.5 text-right font-bold whitespace-nowrap">
-                                      {r.extras.length ? r.extras.map((e) => `${e.name} ${money(e.amount)}`).join(' / ') : '—'}
-                                    </td>
-                                    {view !== 'model' && (
-                                      <td className="px-3 py-1.5 text-right font-bold whitespace-nowrap">
-                                        {view === 'customer'
-                                          ? r.supplier_name
-                                            ? `${r.supplier_name} ${r.purchase_amount != null ? money(Number(r.purchase_amount)) : '未入力'}`
-                                            : '自社'
-                                          : r.purchase_amount != null
-                                            ? money(Number(r.purchase_amount))
-                                            : '未入力'}
-                                      </td>
-                                    )}
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </td>
-                        </tr>
-                      )}
-                    </React.Fragment>
+                      {isOpen &&
+                        g.rows.map((r) => {
+                          const unpriced = r.base == null && !r.extraTotal;
+                          const hasSup = Boolean((r.supplier_name || '').trim());
+                          const cost = r.purchase_amount != null ? Number(r.purchase_amount) : null;
+                          return (
+                            <tr key={r.id} className="border-t border-slate-100 bg-slate-50 text-sm">
+                              <td className="py-2 pl-9 pr-3">
+                                <div className="font-bold">
+                                  {formatJapaneseMonthDay(r.work_date)}　{r.site_name || '現場未入力'}
+                                </div>
+                                <div className="text-xs font-bold text-slate-600">
+                                  {[view === 'customer' ? r.requested_model : r.customer_name, view === 'model' ? r.customer_name : '']
+                                    .filter(Boolean)
+                                    .join('　') || '—'}
+                                  {r.extras.length > 0 && `　付帯: ${r.extras.map((e) => `${e.name} ${money(e.amount)}`).join('、')}`}
+                                </div>
+                              </td>
+                              <td />
+                              <td className={`${td} text-right font-bold`}>{unpriced ? '未入力' : money(r.amount)}</td>
+                              <td className={`${td} text-right font-bold`}>{r.extraTotal ? money(r.extraTotal) : '—'}</td>
+                              {view !== 'model' && (
+                                <td className={`${td} text-right font-bold`}>
+                                  {!hasSup ? (
+                                    '自社'
+                                  ) : (
+                                    <>
+                                      {view === 'customer' && <span className="mr-1 text-xs">{r.supplier_name}</span>}
+                                      {cost != null ? money(cost) : <span className="text-xs text-amber-800">仕入額 未設定</span>}
+                                    </>
+                                  )}
+                                </td>
+                              )}
+                              {view !== 'model' && (
+                                <td className={`${td} text-right font-bold`}>{hasSup && cost != null ? money(r.amount - cost) : '—'}</td>
+                              )}
+                              <td />
+                            </tr>
+                          );
+                        })}                    </React.Fragment>
                   );
                 })}
                 {!loading && groups.length === 0 && (

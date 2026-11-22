@@ -207,7 +207,7 @@ export default function CraneProApp() {
         setModels(modRows);
         try {
           const productRows = await fetchCompanyRows('products', cid, 'code');
-          setExtraProducts(productRows.filter(isExtraProduct));
+          setExtraProducts(productRows.filter((row) => String(row.category1 || '') === '付帯'));
         } catch {
           setExtraProducts([]);
         }
@@ -430,22 +430,19 @@ export default function CraneProApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingJob, loading, dispatches]);
 
-  // 付帯の候補：商品マスタ（機種マスタ）の中の費用・作業員・鉄板など ＋ 商品テーブルの付帯項目
-  const extraItems = (() => {
-    const seen = new Set<string>();
-    const out: { id: string; name: string; kana: string; searchWord: string; first: boolean }[] = [];
-    const likeExtra = /費|料|員|鉄板|誘導|書類|オペレータ|ハウス|その他|高速|回送|待機|ガード|残業|時間外|工具/;
-    const push = (id: string, name: string, kana: string, unit: string) => {
-      if (!name || seen.has(name)) return;
-      seen.add(name);
-      out.push({ id, name, kana, searchWord: unit ? `単位: ${unit}` : '', first: likeExtra.test(name) });
-    };
-    for (const p of extraProducts) push('p' + (p.id || p.code), String(p.name), String(p.kana || ''), p.unit_name && p.unit_name !== 'h' ? String(p.unit_name) : '');
-    for (const m of models) push('m' + (m.id || m.code), String(m.name), String(m.kana || ''), '');
-    return [...out.filter((x) => x.first), ...out.filter((x) => !x.first)];
-  })();
+  // 付帯売上マスタ（商品テーブルの「付帯」区分）を並び順どおりに出す
+  const extraItems = extraProducts
+    .filter((p) => p.name)
+    .slice()
+    .sort((x, y) => (Number(x.dispatch_sort_order) || 99999) - (Number(y.dispatch_sort_order) || 99999) || String(x.code).localeCompare(String(y.code)))
+    .map((p) => ({
+      id: String(p.id || p.code),
+      name: String(p.name),
+      kana: String(p.kana || ''),
+      searchWord: p.unit_name && p.unit_name !== 'h' ? `単位: ${p.unit_name}` : '',
+    }));
 
-  // 付帯の項目をマスタ（商品）に新規登録
+  // 付帯の項目をマスタに新規登録
   const registerExtra = async (index: number) => {
     if (!companyId) return;
     const name = (window.prompt('登録する付帯の名前（例: 残業代、鉄板、高速代）') || '').trim();
@@ -454,23 +451,32 @@ export default function CraneProApp() {
       showToast('同じ名前がすでにあります。一覧から選んでください');
       return;
     }
-    const maxCode = models.reduce((max, m) => Math.max(max, Number(m.code) || 0), 0);
+    const maxCode = extraProducts.reduce((max, p) => Math.max(max, Number(p.code) || 0), 900000);
+    const maxSort = extraProducts.reduce((max, p) => Math.max(max, Number(p.dispatch_sort_order) || 0), 0);
     const { data, error } = await supabase
-      .from('machine_models')
-      .insert({ company_id: companyId, code: String(maxCode + 1), name, sort_order: 995 })
+      .from('products')
+      .insert({
+        company_id: companyId,
+        code: String(maxCode + 1),
+        name,
+        unit_name: '',
+        category1: '付帯',
+        product_type: 'クレーン',
+        dispatch_sort_order: maxSort + 1,
+      })
       .select('*')
       .single();
     if (error || !data) {
       showToast('マスタ登録エラー: ' + (error?.message || ''));
       return;
     }
-    setModels((prev) => [...prev, data]);
+    setExtraProducts((prev) => [...prev, data]);
     setExtras((prev) => {
       const next = [...prev];
       if (next[index]) next[index] = { ...next[index], item_name: name };
       return next;
     });
-    showToast(`「${name}」をマスタに登録しました`);
+    showToast(`「${name}」を付帯マスタに登録しました`);
   };
   // 詳細モーダルの保存
   const saveJobModal = async () => {

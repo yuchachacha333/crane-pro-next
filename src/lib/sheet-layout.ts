@@ -14,6 +14,9 @@ export type SheetCell = {
   edges: SheetEdges;
   wrap: boolean;
   formula: boolean;
+  fill?: string;
+  color?: string;
+  diag?: boolean;
 };
 
 export type SheetDrawing = {
@@ -25,6 +28,11 @@ export type SheetDrawing = {
   w: number;
   y: number; // 表の上端からの pt
   h: number;
+  // 行に対する位置（行番号・行内オフセット EMU）。画面上の実際の行の位置に合わせるために使う
+  r1: number;
+  ro1: number;
+  r2: number;
+  ro2: number;
 };
 
 export type SheetLayout = {
@@ -68,6 +76,25 @@ function mm(tag: string, name: string, fallback: number) {
   return value ? Math.round(value * 254) / 10 : fallback;
 }
 
+const THEME_COLORS: Record<string, string> = { '0': '#ffffff', '1': '#000000' };
+
+function colorOf(tag: string): string {
+  if (!tag) return '';
+  const rgb = tag.match(/rgb="([0-9A-Fa-f]{6,8})"/);
+  if (rgb) return '#' + rgb[1].slice(-6);
+  const theme = tag.match(/theme="(\d+)"/);
+  if (theme && THEME_COLORS[theme[1]]) return THEME_COLORS[theme[1]];
+  return '';
+}
+
+function fillsOf(styles: string) {
+  const block = (styles.match(/<fills[\s\S]*?<\/fills>/) || [''])[0];
+  return block.split(/<fill>/).slice(1).map((part) => {
+    if (!/patternType="solid"/.test(part)) return '';
+    return colorOf((part.match(/<fgColor\b[^>]*\/?>/) || [''])[0]);
+  });
+}
+
 function fontsOf(styles: string) {
   const block = (styles.match(/<fonts[\s\S]*?<\/fonts>/) || [''])[0];
   return block.split(/<font\b[^>]*>/).slice(1).map((part) => {
@@ -75,6 +102,7 @@ function fontsOf(styles: string) {
     return {
       size: size ? Number(size[1]) : 11,
       bold: /<b\/>/.test(part) || /<b [^>]*val="(?:1|true)"/.test(part),
+      color: colorOf((part.match(/<color\b[^>]*\/?>/) || [''])[0]),
     };
   });
 }
@@ -88,21 +116,25 @@ function bordersOf(styles: string) {
       const style = tag[0].match(/style="([^"]+)"/);
       return style ? style[1] : '';
     };
-    return { left: side('left'), right: side('right'), top: side('top'), bottom: side('bottom') };
+    return { left: side('left'), right: side('right'), top: side('top'), bottom: side('bottom'), diag: !!side('diagonal') };
   });
 }
 
 function xfsOf(styles: string) {
   const borders = bordersOf(styles);
+  const fills = fillsOf(styles);
   const block = (styles.match(/<cellXfs[\s\S]*?<\/cellXfs>/) || [''])[0];
   return block.split(/<xf\b/).slice(1).map((part) => {
     const fontId = part.match(/fontId="(\d+)"/);
+    const fillId = part.match(/fillId="(\d+)"/);
     const borderId = part.match(/borderId="(\d+)"/);
     const align = part.match(/horizontal="([^"]+)"/);
     const valign = part.match(/vertical="([^"]+)"/);
     const edges = borders[borderId ? Number(borderId[1]) : 0] || { left: '', right: '', top: '', bottom: '' };
     return {
       fontId: fontId ? Number(fontId[1]) : 0,
+      fill: fills[fillId ? Number(fillId[1]) : 0] || '',
+      diag: !!(borders[borderId ? Number(borderId[1]) : 0] as { diag?: boolean } | undefined)?.diag,
       border: !!(edges.left || edges.right || edges.top || edges.bottom),
       edges,
       align: align ? align[1] : 'left',
@@ -143,13 +175,15 @@ function cellStyle(
 ): SheetCell {
   const xf = xfs[index] || {
     fontId: 0,
+    fill: '',
+    diag: false,
     border: false,
     edges: { left: '', right: '', top: '', bottom: '' },
     align: 'left',
     valign: 'bottom',
     wrap: false,
   };
-  const font = fonts[xf.fontId] || { size: 11, bold: false };
+  const font = fonts[xf.fontId] || { size: 11, bold: false, color: '' };
   return {
     text,
     size: font.size,
@@ -160,6 +194,9 @@ function cellStyle(
     edges: xf.edges || { left: '', right: '', top: '', bottom: '' },
     wrap: !!xf.wrap,
     formula: false,
+    fill: (xf as { fill?: string }).fill || '',
+    color: font.color || '',
+    diag: !!(xf as { diag?: boolean }).diag,
   };
 }
 
@@ -222,6 +259,9 @@ function layoutOf(sheet: string, styles: string, stringsXml: string): SheetLayou
   const end = dim.match(/:([A-Z]+)/);
   let count = end ? colIndex(end[1] + '1') + 1 : 7;
   if (count < 1) count = 7;
+  // 手動の改ページ位置までが印刷範囲（はみ出す文字が見切れないよう列を足す）
+  const brk = sheet.match(/<colBreaks[\s\S]*?<brk id="(\d+)"/);
+  if (brk && Number(brk[1]) > count) count = Number(brk[1]);
   const format = (sheet.match(/<sheetFormatPr\b[^>]*\/?>/) || [''])[0];
   const defaultHeight = Number(attr(format, 'defaultRowHeight')) || 18;
   const endRow = dim.match(/:([A-Z]+)(\d+)/);
@@ -317,6 +357,10 @@ async function drawingsOf(zip: JSZip, layout: SheetLayout, fileName: string) {
       w: Math.max(0, xAt(to) - xAt(from)) / totalWidth,
       y: yAt(from) / 12700,
       h: Math.max(0, yAt(to) - yAt(from)) / 12700,
+      r1: from.row,
+      ro1: from.rowOff,
+      r2: to.row,
+      ro2: to.rowOff,
     };
     if (/<xdr:pic>/.test(block)) {
       const rid = block.match(/r:embed="([^"]+)"/)?.[1] || '';

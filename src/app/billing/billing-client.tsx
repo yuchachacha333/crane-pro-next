@@ -259,7 +259,7 @@ export default function BillingClient() {
     const party = customers.find((customer) => customer.code === group.code);
     const lines: InvoiceLine[] = group.jobs.flatMap((job) => {
       const parts = String(job.work_date || '').match(/^\d{4}-(\d{2})-(\d{2})/);
-      const shown = parts ? `/` : job.work_date;
+      const shown = parts ? `${Number(parts[1])}/${Number(parts[2])}` : job.work_date;
       const site = job.site_name || '現場未入力';
       const unpriced = job.base == null;
       const main: InvoiceLine = {
@@ -290,7 +290,8 @@ export default function BillingClient() {
         end: shown,
       }));
       return [main, ...extraRows];
-    });    setInvoice({
+    });
+    setInvoice({
       name: group.name,
       postal: party?.postal_code || '',
       address: [party?.address1, party?.address2].filter(Boolean).join(' '),
