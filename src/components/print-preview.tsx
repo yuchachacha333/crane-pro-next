@@ -607,18 +607,22 @@ function printPages() {
   if (!pages.length) return;
   const orient = pages[0].getAttribute('data-orient') === 'landscape' ? 'landscape' : 'portrait';
   const sheetW = orient === 'landscape' ? '297mm' : '210mm';
-  const sheetH = orient === 'landscape' ? '209mm' : '296mm';
+  const sheetH = orient === 'landscape' ? '210mm' : '297mm';
+  // Chromium は A4 と同じ高さの要素を端数処理で次ページへ送ることがある。
+  // 用紙を 94% で描画し、短い固定枠に収めることで空白の2ページ目を確実に防ぐ。
+  const frameH = orient === 'landscape' ? '198mm' : '280mm';
   const css =
     `@page{size:A4 ${orient};margin:0}` +
     'html,body{margin:0;padding:0;background:#fff;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
     'body{font-family:"Yu Gothic","Yu Gothic UI","Hiragino Sans",Meiryo,sans-serif}' +
-    `.sheet{box-shadow:none !important;margin:0 !important;overflow:hidden !important;box-sizing:border-box !important;width:${sheetW} !important;height:${sheetH} !important;min-height:0 !important;break-after:auto;page-break-after:auto;break-inside:avoid}` +
-    '.sheet + .sheet{break-before:page;page-break-before:always}' +
+    `.print-page{position:relative;width:${sheetW};height:${frameH};overflow:hidden;break-inside:avoid;page-break-inside:avoid}` +
+    '.print-page + .print-page{break-before:page;page-break-before:always}' +
+    `.sheet{position:absolute !important;left:3% !important;top:0 !important;box-shadow:none !important;margin:0 !important;overflow:hidden !important;box-sizing:border-box !important;width:${sheetW} !important;height:${sheetH} !important;min-height:0 !important;transform:scale(.94);transform-origin:top left}` +
     'table{width:100%;border-collapse:collapse;table-layout:fixed}' +
     'td{-webkit-print-color-adjust:exact;print-color-adjust:exact}';
   let body = '';
   pages.forEach((page) => {
-    body += `<div class="sheet" style="${page.getAttribute('style') || ''}">${page.innerHTML}</div>`;
+    body += `<div class="print-page"><div class="sheet" style="${page.getAttribute('style') || ''}">${page.innerHTML}</div></div>`;
   });
   const frame = document.createElement('iframe');
   frame.setAttribute('style', 'position:fixed;left:-10000px;top:0;width:1400px;height:1800px;border:0');
