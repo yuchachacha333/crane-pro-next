@@ -494,7 +494,7 @@ export function LayoutSheet({ layout, clip = false }: { layout: SheetLayout; cli
 async function sheetsToPdf(title: string) {
   const pages = Array.from(document.querySelectorAll<HTMLElement>('.dispatch-page')).filter((page) => page.querySelector('table'));
   if (!pages.length) return null;
-  const html2canvas = (await import('html2canvas')).default;
+  const { toJpeg } = await import('html-to-image');
   const { jsPDF } = await import('jspdf');
   const orient = pages[0].getAttribute('data-orient') === 'landscape' ? 'l' : 'p';
   const pdf = new jsPDF({ orientation: orient, unit: 'mm', format: 'a4' });
@@ -503,7 +503,7 @@ async function sheetsToPdf(title: string) {
   const pageH = pdf.internal.pageSize.getHeight();
   // 画面の縮小表示を使わず、原寸の複製を撮る。1枚のひな形はPDFも1ページにする
   const stage = document.createElement('div');
-  stage.setAttribute('style', 'position:fixed;left:0;top:0;z-index:-1;opacity:0.01;pointer-events:none;background:#fff');
+  stage.setAttribute('style', 'position:fixed;left:-20000px;top:0;pointer-events:none;background:#fff');
   document.body.appendChild(stage);
   try {
     for (let i = 0; i < pages.length; i++) {
@@ -521,28 +521,14 @@ async function sheetsToPdf(title: string) {
       clone.style.justifyContent = 'center';
       stage.innerHTML = '';
       stage.appendChild(clone);
-      const inner = clone.firstElementChild as HTMLElement | null;
-      if (inner) {
-        inner.style.width = '100%';
-        inner.style.flex = '0 0 auto';
-        const avail = clone.clientHeight;
-        const need = inner.scrollHeight;
-        if (avail > 0 && need > avail) inner.style.zoom = String(avail / need);
-      }
       await new Promise((resolve) => window.setTimeout(resolve, 60));
-      const canvas = await html2canvas(clone, {
-        scale: 2,
+      const image = await toJpeg(clone, {
+        pixelRatio: 2,
+        quality: 0.98,
         backgroundColor: '#ffffff',
-        useCORS: true,
-        scrollX: 0,
-        scrollY: 0,
       });
-      const imgRatio = canvas.width / canvas.height;
-      const pageRatio = pageW / pageH;
-      const w = imgRatio > pageRatio ? pageW : pageH * imgRatio;
-      const h = imgRatio > pageRatio ? pageW / imgRatio : pageH;
       if (i > 0) pdf.addPage('a4', orient);
-      pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', (pageW - w) / 2, (pageH - h) / 2, w, h);
+      pdf.addImage(image, 'JPEG', 0, 0, pageW, pageH);
     }
   } finally {
     stage.remove();
@@ -558,12 +544,6 @@ export async function createSheetFile(title: string) {
 }
 
 export async function shareSheetPages(title: string, prepared?: File | null) {
-  if (isAppleTouch()) {
-    // iOS/iPadOS はHTML→画像PDFで表の文字と罫線がずれるため、
-    // WebKit自身のPDF（印刷プレビュー右下の共有ボタン）を使う。
-    printPages();
-    return;
-  }
   const file = prepared || (await createSheetFile(title));
   if (!file) return;
   if (navigator.share) {
@@ -619,9 +599,13 @@ export function printSheetPages() {
   printPages();
 }
 
+let printInProgress = false;
+
 function printPages() {
+  if (printInProgress) return;
   const pages = Array.from(document.querySelectorAll<HTMLElement>('.dispatch-page')).filter((page) => page.querySelector('table'));
   if (!pages.length) return;
+  printInProgress = true;
   const orient = pages[0].getAttribute('data-orient') === 'landscape' ? 'landscape' : 'portrait';
   const sheetW = orient === 'landscape' ? '297mm' : '210mm';
   const sheetH = orient === 'landscape' ? '210mm' : '297mm';
@@ -638,15 +622,18 @@ function printPages() {
     `html,body{margin:0!important;padding:0!important;background:#fff!important;color:#000!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}` +
     `body>*:not(.native-print-stage){display:none!important}` +
     `.native-print-stage{display:block!important;font-family:"Yu Gothic","Yu Gothic UI","Hiragino Sans",Meiryo,sans-serif}` +
+    `.native-print-stage.native-single{position:fixed!important;inset:0!important;width:${sheetW}!important;height:${sheetH}!important;overflow:hidden!important}` +
     `.native-print-page{position:relative;width:${sheetW};height:${frameH};overflow:hidden;break-inside:avoid;page-break-inside:avoid}` +
+    `.native-single .native-print-page{position:absolute!important;inset:0!important;width:${sheetW}!important;height:${sheetH}!important;overflow:hidden!important}` +
     `.native-print-page+.native-print-page{break-before:page;page-break-before:always}` +
     `.native-print-sheet{position:absolute!important;left:1%!important;top:0!important;box-shadow:none!important;margin:0!important;overflow:hidden!important;box-sizing:border-box!important;width:${sheetW}!important;height:${sheetH}!important;min-height:0!important;transform:scale(.98)!important;transform-origin:top left!important}` +
+    `.native-single .native-print-sheet{left:0!important;transform:none!important}` +
     `.native-print-sheet table{width:100%!important;border-collapse:collapse!important;table-layout:fixed!important}` +
     `.native-print-sheet td{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}` +
     `}`;
   document.head.appendChild(style);
   const stage = document.createElement('div');
-  stage.className = 'native-print-stage';
+  stage.className = pages.length === 1 ? 'native-print-stage native-single' : 'native-print-stage';
   pages.forEach((page) => {
     const frame = document.createElement('div');
     frame.className = 'native-print-page';
@@ -657,17 +644,16 @@ function printPages() {
   });
   document.body.appendChild(stage);
   const clean = () => {
+    printInProgress = false;
     stage.remove();
     style.remove();
     window.removeEventListener('afterprint', clean);
   };
   window.addEventListener('afterprint', clean);
+  window.setTimeout(() => {
+    if (document.body.contains(stage)) clean();
+  }, 60_000);
   window.print();
-}
-
-function isAppleTouch() {
-  if (typeof navigator === 'undefined') return false;
-  return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
 function pageFrame(layout: SheetLayout): CSSProperties {
