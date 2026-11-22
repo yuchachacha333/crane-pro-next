@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { downloadMapPdf, downloadMapWord } from '@/lib/map-word';
+import { downloadMapPdf, downloadMapWord, FRAME_H_MM, FRAME_W_MM } from '@/lib/map-word';
 
 type Props = {
   address: string;
@@ -24,7 +24,9 @@ type CaptureOptions = DisplayMediaStreamOptions & {
 };
 
 export default function WhiteMapDialog({ address, date, siteName, onClose }: Props) {
-  const sheetRef = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<HTMLDivElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
+  const [frame, setFrame] = useState({ width: 0, height: 0 });
   const [src, setSrc] = useState('');
   const [place, setPlace] = useState('');
   const [status, setStatus] = useState('住所を探しています');
@@ -59,8 +61,28 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
     };
   }, [address]);
 
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const fit = () => {
+      const ratio = FRAME_W_MM / FRAME_H_MM;
+      const bounds = map.getBoundingClientRect();
+      let width = bounds.width;
+      let height = width / ratio;
+      if (height > bounds.height) {
+        height = bounds.height;
+        width = height * ratio;
+      }
+      setFrame({ width, height });
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(map);
+    return () => observer.disconnect();
+  }, []);
+
   async function saveMap() {
-    const sheet = sheetRef.current;
+    const sheet = frameRef.current;
     if (!sheet || !src || saving) return;
     setSaving(true);
     setStatus('表示された画面で、このタブを選んでください');
@@ -125,7 +147,9 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
         <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-lg font-extrabold">モノトーン地図</h2>
-            <p className="text-xs font-bold text-slate-500 truncate">{status}</p>
+            <p className="text-xs font-bold text-slate-500 truncate">
+              {status === place ? '枠の中が、比率を変えずにA4横へ入ります' : status}
+            </p>
           </div>
           <div className="flex gap-2 shrink-0">
             <button
@@ -143,14 +167,25 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
         </div>
         <div className="flex flex-col flex-1 min-h-0 bg-white">
           <p className="px-4 py-2 border-b border-slate-200 text-base font-extrabold">{address}</p>
-          <div ref={sheetRef} className="relative flex-1 min-h-0 bg-white" style={{ isolation: 'isolate' }}>
+          <div ref={mapRef} className="relative flex-1 min-h-0 overflow-hidden bg-white">
             {src ? (
               <iframe
                 title={`${address}のヤフー地図`}
                 src={src}
-                className="absolute inset-0 h-full w-full [clip-path:polygon(252px_0,100%_0,100%_100%,0_100%,0_128px,252px_128px)] max-[1023px]:[clip-path:inset(140px_0_0_0)]"
+                className="absolute top-0 -left-[260px] h-full w-[calc(100%+260px)] max-[1023px]:left-0 max-[1023px]:top-[-150px] max-[1023px]:h-[calc(100%+150px)] max-[1023px]:w-full"
               />
             ) : null}
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <div
+                ref={frameRef}
+                style={{
+                  width: frame.width,
+                  height: frame.height,
+                  outline: '3px solid #0f172a',
+                  boxShadow: '0 0 0 9999px rgba(15, 23, 42, 0.45)',
+                }}
+              />
+            </div>
           </div>
         </div>
       </div>

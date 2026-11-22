@@ -1,5 +1,9 @@
 const PAGE_W_MM = 297;
 const PAGE_H_MM = 210;
+const MARGIN_MM = 5;
+
+export const FRAME_W_MM = PAGE_W_MM - MARGIN_MM * 2;
+export const FRAME_H_MM = PAGE_H_MM - MARGIN_MM * 2;
 
 export async function downloadMapWord(png: Blob, fileBase: string) {
   const {
@@ -23,7 +27,14 @@ export async function downloadMapWord(png: Blob, fileBase: string) {
               height: convertMillimetersToTwip(PAGE_W_MM),
               orientation: PageOrientation.LANDSCAPE,
             },
-            margin: { top: 0, bottom: 0, left: 0, right: 0, header: 0, footer: 0 },
+            margin: {
+              top: convertMillimetersToTwip(MARGIN_MM),
+              bottom: convertMillimetersToTwip(MARGIN_MM),
+              left: convertMillimetersToTwip(MARGIN_MM),
+              right: convertMillimetersToTwip(MARGIN_MM),
+              header: 0,
+              footer: 0,
+            },
           },
         },
         children: [
@@ -34,12 +45,12 @@ export async function downloadMapWord(png: Blob, fileBase: string) {
                 type: 'png',
                 data: new Uint8Array(await png.arrayBuffer()),
                 transformation: {
-                  width: px(PAGE_W_MM),
-                  height: px(PAGE_H_MM),
+                  width: px(FRAME_W_MM),
+                  height: px(FRAME_H_MM),
                 },
                 floating: {
-                  horizontalPosition: { relative: HorizontalPositionRelativeFrom.PAGE, offset: 0 },
-                  verticalPosition: { relative: VerticalPositionRelativeFrom.PAGE, offset: 0 },
+                  horizontalPosition: { relative: HorizontalPositionRelativeFrom.PAGE, offset: emu(MARGIN_MM) },
+                  verticalPosition: { relative: VerticalPositionRelativeFrom.PAGE, offset: emu(MARGIN_MM) },
                   behindDocument: true,
                   allowOverlap: true,
                   wrap: { type: TextWrappingType.NONE },
@@ -58,7 +69,7 @@ export async function downloadMapWord(png: Blob, fileBase: string) {
 export async function downloadMapPdf(png: Blob, fileBase: string) {
   const { jsPDF } = await import('jspdf');
   const pdf = new jsPDF({ orientation: 'l', unit: 'mm', format: 'a4' });
-  pdf.addImage(await blobToDataUrl(png), 'PNG', 0, 0, PAGE_W_MM, PAGE_H_MM);
+  pdf.addImage(await blobToDataUrl(png), 'PNG', MARGIN_MM, MARGIN_MM, FRAME_W_MM, FRAME_H_MM);
   const blob = pdf.output('blob');
   const file = new File([blob], `${fileBase}.pdf`, { type: 'application/pdf' });
   if (navigator.canShare?.({ files: [file] })) {
@@ -70,6 +81,10 @@ export async function downloadMapPdf(png: Blob, fileBase: string) {
 
 function px(mm: number) {
   return Math.round((mm / 25.4) * 96);
+}
+
+function emu(mm: number) {
+  return Math.round((mm / 25.4) * 914400);
 }
 
 function saveBlob(blob: Blob, name: string) {
