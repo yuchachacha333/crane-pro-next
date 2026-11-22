@@ -131,6 +131,8 @@ export default function PickerSheet({
   title,
   items,
   current,
+  currentId,
+  layout = 'full',
   kana = true,
   onPick,
   onClose,
@@ -140,6 +142,8 @@ export default function PickerSheet({
   title: string;
   items: SheetItem[];
   current?: string;
+  currentId?: string;
+  layout?: 'full' | 'window';
   kana?: boolean;
   onPick: (id: string) => void;
   onClose: () => void;
@@ -184,11 +188,25 @@ export default function PickerSheet({
 
   const chip = (active: boolean) =>
     `h-12 rounded-xl text-lg font-black ${active ? 'bg-teal-700 text-white' : 'bg-slate-200 text-black'}`;
+  const windowed = layout === 'window';
 
   return createPortal(
     <div
       data-name-picker
-      className="fixed inset-0 z-[120] flex h-dvh max-h-dvh flex-col bg-white text-black pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]"
+      className={
+        windowed
+          ? 'fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/45 p-4'
+          : 'fixed inset-0 z-[120] flex h-dvh max-h-dvh flex-col bg-white text-black pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)]'
+      }
+      onMouseDown={windowed ? onClose : undefined}
+    >
+    <div
+      className={
+        windowed
+          ? 'flex h-[min(760px,90vh)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white text-black shadow-2xl'
+          : 'flex h-full min-h-0 w-full flex-col'
+      }
+      onMouseDown={windowed ? (event) => event.stopPropagation() : undefined}
     >
       <div className="shrink-0 border-b-2 border-slate-300 px-3 pb-3 pt-3">
         <h2 className="mb-2 text-xl font-black text-black">{title}</h2>
@@ -269,7 +287,9 @@ export default function PickerSheet({
                 type="button"
                 onClick={() => onPick(item.id)}
                 className={`block min-h-14 w-full border-b border-slate-300 px-4 py-2.5 text-left active:bg-teal-100 ${
-                  current && (item.label === current || item.id === current) ? 'bg-teal-50' : ''
+                  (currentId && item.id === currentId) || (!currentId && current && (item.label === current || item.id === current))
+                    ? 'bg-teal-50'
+                    : ''
                 }`}
               >
                 <span className="block text-lg font-black leading-snug text-black">{item.label}</span>
@@ -299,6 +319,7 @@ export default function PickerSheet({
           閉じる
         </button>
       </div>
+    </div>
     </div>,
     document.body
   );

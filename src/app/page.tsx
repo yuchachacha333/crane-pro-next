@@ -639,10 +639,11 @@ export default function CraneProApp() {
   const customerItems = customers
     .filter((customer) => customer.name)
     .map((customer) => ({
-      id: String(customer.id || customer.code),
+      id: String(customer.code || customer.id),
       name: String(customer.name),
       kana: String(customer.kana || ''),
       searchWord: String(customer.search_word || ''),
+      detail: [customer.address1, customer.address2].filter(Boolean).join(' '),
     }));
   const supplierItems = customers
     .filter((customer) => customer.name && String(customer.partner_type || '').includes('仕入'))
@@ -727,8 +728,10 @@ export default function CraneProApp() {
       entryTime: row.entry_time || '',
     });
   };
-  const applyCustomer = (row: DispatchRecord, val: string) => {
-    const hit = customers.find((customer) => customer.name === val);
+  const applyCustomer = (row: DispatchRecord, val: string, id?: string) => {
+    const hit =
+      (id && customers.find((customer) => String(customer.code || customer.id) === id)) ||
+      customers.find((customer) => customer.name === val);
     if (!hit) {
       handleUpdateField(row.id, {
         customer_name: val,
@@ -1232,11 +1235,13 @@ export default function CraneProApp() {
                         <td className="p-0 border-r border-slate-200">
                           <div className="flex items-center">
                             <NamePicker
+                              panel
                               value={row.customer_name || ''}
+                              currentId={row.customer_code || ''}
                               items={customerItems}
                               title="得意先を選ぶ"
-                              placeholder="名前・カナ・漢字・英字"
-                              onSelect={(name) => applyCustomer(row, name)}
+                              placeholder="タップして選ぶ"
+                              onSelect={(name, id) => applyCustomer(row, name, id)}
                               className="w-full h-11 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none"
                             />
                           </div>
@@ -1464,11 +1469,13 @@ export default function CraneProApp() {
                     <label className="block">
                       <span className="text-[11px] font-extrabold text-slate-500">得意先</span>
                       <NamePicker
+                        panel
                         value={row.customer_name || ''}
+                        currentId={row.customer_code || ''}
                         items={customerItems}
                         title="得意先を選ぶ"
-                        placeholder="名前・カナ・漢字・英字"
-                        onSelect={(name) => applyCustomer(row, name)}
+                        placeholder="タップして選ぶ"
+                        onSelect={(name, id) => applyCustomer(row, name, id)}
                         className={fieldClass}
                       />
                     </label>

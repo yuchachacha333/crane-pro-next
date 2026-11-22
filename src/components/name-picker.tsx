@@ -9,6 +9,7 @@ export type NameItem = {
   name: string;
   kana?: string;
   searchWord?: string;
+  detail?: string;
 };
 
 function matches(item: NameItem, raw: string) {
@@ -38,6 +39,8 @@ export default function NamePicker({
   className,
   freeText,
   title,
+  panel,
+  currentId,
   onSelect,
   onCreate,
 }: {
@@ -48,7 +51,9 @@ export default function NamePicker({
   className?: string;
   freeText?: boolean;
   title?: string;
-  onSelect: (name: string) => void;
+  panel?: boolean;
+  currentId?: string;
+  onSelect: (name: string, id?: string) => void;
   onCreate?: () => void;
 }) {
   const touch = useTouchPad();
@@ -71,9 +76,9 @@ export default function NamePicker({
       items.map((item) => ({
         id: item.id,
         label: stripCompany(item.name) || item.name,
-        sub: item.searchWord || undefined,
+        sub: item.detail || item.searchWord || undefined,
         sort: readingOf(item.kana, item.name),
-        haystack: makeHaystack(item.name, stripCompany(item.name), item.kana, item.searchWord),
+        haystack: makeHaystack(item.name, stripCompany(item.name), item.kana, item.searchWord, item.detail),
       })),
     [items]
   );
@@ -98,8 +103,8 @@ export default function NamePicker({
     return () => document.removeEventListener('mousedown', close);
   }, [open]);
 
-  function choose(name: string) {
-    onSelect(name);
+  function choose(name: string, id?: string) {
+    onSelect(name, id);
     setQuery('');
     setOpen(false);
     setShowAll(false);
@@ -109,8 +114,8 @@ export default function NamePicker({
   const browsing = showAll || (Boolean(freeText) && !filterText.trim());
   const list = browsing ? items.slice(0, 80) : found;
 
-  // スマホ・iPad: 画面いっぱいの専用選択画面
-  if (touch) {
+  // スマホ・iPad、または指定した項目は頭文字で絞る選択画面
+  if (touch || panel) {
     return (
       <div ref={box} className="relative min-w-0 w-full">
         <input
@@ -127,7 +132,9 @@ export default function NamePicker({
             title={title || placeholder || '選択'}
             items={sheetItems}
             current={value}
-            onPick={(id) => choose(nameById.get(id) || '')}
+            currentId={currentId}
+            layout={touch ? 'full' : 'window'}
+            onPick={(id) => choose(nameById.get(id) || '', id)}
             onFreeText={freeText ? (text) => choose(text) : undefined}
             onCreate={onCreate ? () => { setSheet(false); onCreate(); } : undefined}
             onClose={() => setSheet(false)}
