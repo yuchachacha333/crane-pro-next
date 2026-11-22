@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Plus, Save, Search } from 'lucide-react';
+import { Plus, Save, Search, Trash2 } from 'lucide-react';
 import AppSidebar from '@/components/app-sidebar';
 import { getDefaultCompanyId, supabase } from '@/lib/supabase';
 import { lookupPostal } from '@/lib/address-lookup';
@@ -34,6 +34,7 @@ export default function MastersClient() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
@@ -239,6 +240,28 @@ export default function MastersClient() {
     await loadRows(master, companyId, query);
   }
 
+  async function remove() {
+    if (!selectedId || selectedId === 'new') return;
+    const label = draft.name || master.title;
+    if (!window.confirm(`「${label}」を削除しますか？`)) return;
+    setDeleting(true);
+    setError('');
+    const { error: deleteError } = await supabase.from(table).delete().eq('id', selectedId);
+    setDeleting(false);
+    if (deleteError) {
+      setError(
+        /foreign key|violates/i.test(deleteError.message)
+          ? 'このマスタは配車などで使われているため削除できません'
+          : deleteError.message
+      );
+      return;
+    }
+    setSelectedId(null);
+    setDraft({});
+    setMessage('削除しました');
+    await loadRows(master, companyId, query);
+  }
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col md:flex-row">
       <AppSidebar active="masters" />
@@ -411,14 +434,27 @@ export default function MastersClient() {
                 </div>
                 {error && <p className="mt-3 text-sm font-bold text-rose-700">{error}</p>}
                 {message && <p className="mt-3 text-sm font-bold text-teal-800">{message}</p>}
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="mt-4 h-11 px-4 rounded-xl bg-[#121826] text-white font-extrabold text-sm inline-flex items-center gap-2 disabled:opacity-50"
-                >
-                  <Save className="w-4 h-4" />
-                  {saving ? '保存中...' : '保存'}
-                </button>
+                <div className="mt-4 flex items-center gap-2">
+                  <button
+                    type="submit"
+                    disabled={saving || deleting}
+                    className="h-11 px-4 rounded-xl bg-[#121826] text-white font-extrabold text-sm inline-flex items-center gap-2 disabled:opacity-50"
+                  >
+                    <Save className="w-4 h-4" />
+                    {saving ? '保存中...' : '保存'}
+                  </button>
+                  {selectedId !== 'new' && (
+                    <button
+                      type="button"
+                      disabled={saving || deleting}
+                      onClick={() => void remove()}
+                      className="h-11 px-4 rounded-xl border border-rose-300 text-rose-700 font-extrabold text-sm inline-flex items-center gap-2 disabled:opacity-50"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      {deleting ? '削除中...' : '削除'}
+                    </button>
+                  )}
+                </div>
               </form>
             )}
           </section>

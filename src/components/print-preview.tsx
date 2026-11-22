@@ -76,6 +76,14 @@ function minutes(value: string) {
   return Number(match[1]) * 60 + Number(match[2]);
 }
 
+function crewRank(name: string) {
+  const text = String(name || '').replace(/[\s\u3000]/g, '');
+  if (text.includes('山科裕行')) return 0;
+  if (text.includes('外山')) return 1;
+  if (text.includes('山科康行')) return 2;
+  return 100;
+}
+
 function columnField(text: string) {
   const value = String(text || '').replace(/\s+/g, '');
   if (value.includes('お客様')) return 'customer';
@@ -309,7 +317,11 @@ function FormPage({
 
 function BoardPage({ layout, jobs, date }: { layout: SheetLayout; jobs: PrintJob[]; date: string }) {
   const scale = Number(layout.scale) || 100;
-  const ordered = [...jobs].sort((a, b) => minutes(a.entry_time) - minutes(b.entry_time));
+  const ordered = [...jobs].sort((a, b) => {
+    const rank = crewRank(a.operator_name) - crewRank(b.operator_name);
+    if (rank !== 0) return rank;
+    return minutes(a.entry_time) - minutes(b.entry_time);
+  });
   const mapped = ordered.map((job) => ({
     customer: plainName(job.customer_name),
     site: plainName(job.site_name),

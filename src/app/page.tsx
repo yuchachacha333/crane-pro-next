@@ -25,6 +25,7 @@ import PrintPreview, { type PrintKind } from '@/components/print-preview';
 import SuggestInput, { type SuggestOption } from '@/components/suggest-input';
 import NamePicker from '@/components/name-picker';
 import AttachDialog from '@/components/attach-dialog';
+import WhiteMapDialog from '@/components/white-map';
 import { supabase, getDefaultCompanyId } from '@/lib/supabase';
 import { sameCode, sameParty, partyKey } from '@/lib/party-name';
 import { toHalfwidthTime } from '@/lib/time-text';
@@ -65,6 +66,9 @@ interface DispatchRecord {
   contact_code: string;
   contact_name: string;
   contact_tel: string;
+  supplier_contact_code?: string;
+  supplier_contact_name?: string;
+  supplier_contact_tel?: string;
   received_date: string;
   end_client_name: string;
   work_location: string;
@@ -144,6 +148,7 @@ export default function CraneProApp() {
   const [contactDraft, setContactDraft] = useState<ContactDraft | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [attachJobId, setAttachJobId] = useState<string | null>(null);
+  const [mapAddress, setMapAddress] = useState('');
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -303,7 +308,11 @@ export default function CraneProApp() {
 
     const { error } = await supabase.from('dispatches').update(nextPatch).eq('id', id);
     if (error) {
-      showToast('保存エラー: ' + error.message);
+      showToast(
+        /supplier_contact/i.test(error.message)
+          ? '庸車の担当者を保存するには、Supabaseで supabase/dispatch_supplier_contact.sql を実行してください'
+          : '保存エラー: ' + error.message
+      );
     }
   };
 
@@ -399,9 +408,27 @@ export default function CraneProApp() {
       end_client_name: selectedJob.end_client_name,
       work_location: selectedJob.work_location,
       prime_contractor: selectedJob.prime_contractor,
+      supplier_code: selectedJob.supplier_code,
+      supplier_name: selectedJob.supplier_name,
     };
 
     const { error } = await supabase.from('dispatches').update(updatePayload).eq('id', selectedJob.id);
+    let supplierContactError = '';
+    if (!error) {
+      const contactSave = await supabase
+        .from('dispatches')
+        .update({
+          supplier_contact_code: selectedJob.supplier_contact_code || '',
+          supplier_contact_name: selectedJob.supplier_contact_name || '',
+          supplier_contact_tel: selectedJob.supplier_contact_tel || '',
+        })
+        .eq('id', selectedJob.id);
+      if (contactSave.error && /supplier_contact/i.test(contactSave.error.message)) {
+        supplierContactError = '庸車の担当者を保存するには、Supabaseで supabase/dispatch_supplier_contact.sql を実行してください';
+      } else if (contactSave.error) {
+        supplierContactError = contactSave.error.message;
+      }
+    }
 
     // 付帯売上明細の入れ替え保存
     await supabase.from('dispatch_extras').delete().eq('dispatch_id', selectedJob.id);
@@ -424,6 +451,9 @@ export default function CraneProApp() {
     setSavingJob(false);
     if (error) {
       showToast('保存エラー: ' + error.message);
+    } else if (supplierContactError) {
+      showToast(supplierContactError);
+      fetchDispatches();
     } else {
       showToast('詳細と売上データを保存しました');
       setSelectedJob(null);
@@ -507,16 +537,14 @@ export default function CraneProApp() {
     const site = sites.find(
       (item) => (row.site_code && item.code === row.site_code) || (row.site_name && item.name === row.site_name)
     );
-    const stored = String(site?.address || '');
-    if (stored) return stored;
-    const name = String(row.site_name || '');
-    if (/[0-9０-９]/.test(name) && /[市区町村郡丁目番地]/.test(name)) return name;
-    return '';
+    return String(site?.address || '');
   };
   const openMap = (address: string) => {
     if (!address) return;
-    window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`, '_blank', 'noopener');
+    setMapAddress(address);
   };
+  const isOwnOperator = (name: string) =>
+    operators.some((op) => String(op.name || '').trim() && String(op.name).trim() === String(name || '').trim());
   const registerSite = (row: DispatchRecord) => {
     setSiteDraft({
       rowId: row.id,
@@ -560,6 +588,9 @@ export default function CraneProApp() {
     );
     handleUpdateField(row.id, {
       supplier_name: val,
+      supplier_contact_code: '',
+      supplier_contact_name: '',
+      supplier_contact_tel: '',
       ...(hit
         ? { supplier_code: hit.code || '', operator_name: '', operator_code: '' }
         : val
@@ -583,6 +614,7 @@ export default function CraneProApp() {
             ...(!row.entry_time && site.default_entry_time
               ? { entry_time: toHalfwidthTime(site.default_entry_time) }
               : {}),
+            ...(site.address ? { site_address: site.address } : {}),
             ...(site.contact_name
               ? { contact_name: site.contact_name, contact_tel: site.contact_tel || '', contact_code: '' }
               : {}),
@@ -600,51 +632,62 @@ export default function CraneProApp() {
   function contactChooser(
     row: DispatchRecord,
     onPick: (patch: Partial<DispatchRecord>) => void,
-    className = 'w-full h-8 px-2 text-xs font-bold bg-teal-50 outline-none'
+    className = 'w-full h-8 px-2 text-xs font-bold bg-teal-50 outline-none',
+    party: 'customer' | 'supplier' = 'customer'
   ) {
-    const people = peopleFor(row.customer_code || '', row.customer_name || '');
-    const hasCustomer = Boolean(row.customer_name || row.customer_code);
-    if (!hasCustomer) {
-      return row.contact_name ? (
-        <div className="px-2.5 pb-1 text-[11px] font-bold text-teal-800">
-          {row.contact_name}
-          {row.contact_tel ? ` ${row.contact_tel}` : ''}
-        </div>
-      ) : null;
-    }
-    const known = people.some((person) => person.code === row.contact_code);
+    const partyCode = party === 'supplier' ? row.supplier_code || '' : row.customer_code || '';
+    const partyName = party === 'supplier' ? row.supplier_name || '' : row.customer_name || '';
+    const currentCode = party === 'supplier' ? row.supplier_contact_code || '' : row.contact_code || '';
+    const currentName = party === 'supplier' ? row.supplier_contact_name || '' : row.contact_name || '';
+    const currentTel = party === 'supplier' ? row.supplier_contact_tel || '' : row.contact_tel || '';
+    if (!partyName && !partyCode) return null;
+    const people = peopleFor(partyCode, partyName);
+    const known = people.some((person) => person.code === currentCode);
+    const emptyPatch =
+      party === 'supplier'
+        ? { supplier_contact_code: '', supplier_contact_name: '', supplier_contact_tel: '' }
+        : { contact_code: '', contact_name: '', contact_tel: '' };
     return (
       <select
-        value={known ? row.contact_code : row.contact_name ? '__current__' : ''}
+        value={known ? currentCode : currentName ? '__current__' : ''}
         onChange={(event) => {
           const next = event.target.value;
           if (next === '__new__') {
             setContactDraft({
               rowId: row.id,
-              customerCode: row.customer_code || '',
-              customerName: row.customer_name || '',
+              customerCode: partyCode,
+              customerName: partyName,
+              target: party === 'supplier' ? 'supplier' : 'job',
             });
             return;
           }
           if (!next) {
-            onPick({ contact_code: '', contact_name: '', contact_tel: '' });
+            onPick(emptyPatch);
             return;
           }
           if (next === '__current__') return;
           const person = people.find((item) => item.code === next);
-          onPick({
-            contact_code: person?.code || '',
-            contact_name: person?.name || '',
-            contact_tel: person?.tel || '',
-          });
+          onPick(
+            party === 'supplier'
+              ? {
+                  supplier_contact_code: person?.code || '',
+                  supplier_contact_name: person?.name || '',
+                  supplier_contact_tel: person?.tel || '',
+                }
+              : {
+                  contact_code: person?.code || '',
+                  contact_name: person?.name || '',
+                  contact_tel: person?.tel || '',
+                }
+          );
         }}
         className={className}
       >
-        <option value="">担当者を選択</option>
-        {!known && row.contact_name ? (
+        <option value="">{party === 'supplier' ? '庸車の担当者' : '担当者を選択'}</option>
+        {!known && currentName ? (
           <option value="__current__">
-            {row.contact_name}
-            {row.contact_tel ? ` ${row.contact_tel}` : ''}
+            {currentName}
+            {currentTel ? ` ${currentTel}` : ''}
           </option>
         ) : null}
         {people.map((person) => (
@@ -910,6 +953,8 @@ export default function CraneProApp() {
                   {filteredDispatches.map((row, idx) => {
                     const hasOp = Boolean(row.operator_name?.trim());
                     const hasSup = Boolean(row.supplier_name?.trim());
+                    const ownOp = isOwnOperator(row.operator_name || '');
+                    const siteAddress = addressOf(row);
                     const badgeColor = getMachineBadgeColor(row.requested_model);
 
                     const undispatched = isUnassigned(row);
@@ -956,7 +1001,7 @@ export default function CraneProApp() {
                         </td>
 
                         {/* オペレーター（庸車が入っている場合はロック） */}
-                        <td className="p-0 border-r border-slate-200">
+                        <td className={`p-0 border-r border-slate-200 ${ownOp ? 'bg-emerald-400' : ''}`}>
                           <input
                             type="text"
                             list="operator-names"
@@ -970,13 +1015,28 @@ export default function CraneProApp() {
                               handleUpdateField(row.id, {
                                 operator_name: val,
                                 ...(hit
-                                  ? { operator_code: hit.code || '', supplier_name: '', supplier_code: '' }
+                                  ? {
+                                      operator_code: hit.code || '',
+                                      supplier_name: '',
+                                      supplier_code: '',
+                                      supplier_contact_code: '',
+                                      supplier_contact_name: '',
+                                      supplier_contact_tel: '',
+                                    }
                                   : val
-                                    ? { supplier_name: '', supplier_code: '' }
+                                    ? {
+                                        supplier_name: '',
+                                        supplier_code: '',
+                                        supplier_contact_code: '',
+                                        supplier_contact_name: '',
+                                        supplier_contact_tel: '',
+                                      }
                                     : { operator_code: '' }),
                               });
                             }}
-                            className="w-full h-11 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none disabled:bg-slate-100 disabled:text-slate-400"
+                            className={`w-full h-11 px-2.5 font-bold outline-none focus:ring-2 focus:ring-teal-700 disabled:bg-slate-100 disabled:text-slate-400 ${
+                              ownOp ? 'bg-emerald-400 focus:bg-emerald-300' : 'bg-transparent focus:bg-white'
+                            }`}
                           />
                         </td>
 
@@ -986,10 +1046,16 @@ export default function CraneProApp() {
                             value={row.supplier_name || ''}
                             items={supplierItems}
                             disabled={hasOp && !hasSup}
-                            placeholder={hasOp ? '自社オペ中' : '検索ワード3文字'}
+                            placeholder={hasOp ? '自社オペ中' : '名前・カナ・漢字・英字'}
                             onSelect={(name) => applySupplier(row, name)}
                             className="w-full h-11 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none disabled:bg-slate-100 disabled:text-slate-400"
                           />
+                          {contactChooser(
+                            row,
+                            (patch) => handleUpdateField(row.id, patch),
+                            'w-full h-8 px-2 text-xs font-bold bg-amber-50 outline-none',
+                            'supplier'
+                          )}
                         </td>
 
                         {/* 得意先 */}
@@ -998,7 +1064,7 @@ export default function CraneProApp() {
                             <NamePicker
                               value={row.customer_name || ''}
                               items={customerItems}
-                              placeholder="検索ワード3文字"
+                              placeholder="名前・カナ・漢字・英字"
                               onSelect={(name) => applyCustomer(row, name)}
                               className="w-full h-11 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none"
                             />
@@ -1043,9 +1109,10 @@ export default function CraneProApp() {
                         {/* 受付機種 */}
                         <td className="p-1 border-r border-slate-200">
                           <NamePicker
+                            freeText
                             value={row.requested_model || ''}
                             items={modelItems}
-                            placeholder="検索ワード3文字"
+                            placeholder="選ぶか、直接入力"
                             onSelect={(name) => handleUpdateField(row.id, { requested_model: name })}
                             className={`w-full h-9 px-2 rounded-lg border font-extrabold text-xs outline-none focus:ring-2 focus:ring-teal-600 ${badgeColor}`}
                           />
@@ -1078,16 +1145,19 @@ export default function CraneProApp() {
                           />
                         </td>
 
-                        {/* 備考 */}
-                        <td className="p-0 border-r border-slate-200">
+                        {/* 備考（現場マスタの住所を表示） */}
+                        <td className="p-1 border-r border-slate-200 align-top">
+                          {siteAddress && (
+                            <div className="px-1.5 text-xs font-bold leading-snug text-slate-900 break-all">{siteAddress}</div>
+                          )}
                           <input
                             type="text"
                             value={row.notes || ''}
-                            placeholder="備考"
+                            placeholder={siteAddress ? '追記' : '備考'}
                             onChange={(e) =>
                               handleUpdateField(row.id, { notes: e.target.value })
                             }
-                            className="w-full h-11 px-2.5 bg-transparent focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none"
+                            className="w-full h-8 px-1.5 bg-transparent text-xs focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none"
                           />
                         </td>
 
@@ -1125,6 +1195,8 @@ export default function CraneProApp() {
               {filteredDispatches.map((row, idx) => {
                 const hasOp = Boolean(row.operator_name?.trim());
                 const hasSup = Boolean(row.supplier_name?.trim());
+                const ownOp = isOwnOperator(row.operator_name || '');
+                const siteAddress = addressOf(row);
                 const fieldClass =
                   'w-full h-10 px-2.5 rounded-lg border border-slate-300 bg-white font-bold text-sm outline-none focus:ring-2 focus:ring-teal-600 disabled:bg-slate-100 disabled:text-slate-400';
                 return (
@@ -1181,6 +1253,7 @@ export default function CraneProApp() {
                   {editingId !== row.id && (
                     <div>
                       <div className="font-extrabold text-lg text-slate-900">{row.site_name || '（現場名未入力）'}</div>
+                      {siteAddress && <div className="text-sm font-bold text-slate-800 mt-0.5">{siteAddress}</div>}
                       <div className="text-sm font-bold text-slate-600 mt-0.5">{row.customer_name || '（得意先未入力）'}</div>
                       {row.contact_name && (
                         <div className="text-sm font-bold text-teal-800 mt-0.5">
@@ -1189,11 +1262,15 @@ export default function CraneProApp() {
                         </div>
                       )}
                       <div className="mt-2 text-sm font-bold text-slate-800">
-                        {row.operator_name
-                          ? `オペ: ${row.operator_name}`
-                          : row.supplier_name
-                            ? `庸車: ${row.supplier_name}`
-                            : 'オペ・庸車 未割当'}
+                        {row.operator_name ? (
+                          <span className={ownOp ? 'inline-block rounded-md bg-emerald-400 px-2 py-0.5' : ''}>
+                            オペ: {row.operator_name}
+                          </span>
+                        ) : row.supplier_name ? (
+                          `庸車: ${row.supplier_name}`
+                        ) : (
+                          'オペ・庸車 未割当'
+                        )}
                         {row.is_cancelled ? ' / 取消' : ''}
                       </div>
                     </div>
@@ -1233,7 +1310,7 @@ export default function CraneProApp() {
                       <NamePicker
                         value={row.customer_name || ''}
                         items={customerItems}
-                        placeholder="検索ワード3文字"
+                        placeholder="名前・カナ・漢字・英字"
                         onSelect={(name) => applyCustomer(row, name)}
                         className={fieldClass}
                       />
@@ -1255,13 +1332,26 @@ export default function CraneProApp() {
                             handleUpdateField(row.id, {
                               operator_name: val,
                               ...(hit
-                                ? { operator_code: hit.code || '', supplier_name: '', supplier_code: '' }
+                                ? {
+                                    operator_code: hit.code || '',
+                                    supplier_name: '',
+                                    supplier_code: '',
+                                    supplier_contact_code: '',
+                                    supplier_contact_name: '',
+                                    supplier_contact_tel: '',
+                                  }
                                 : val
-                                  ? { supplier_name: '', supplier_code: '' }
+                                  ? {
+                                      supplier_name: '',
+                                      supplier_code: '',
+                                      supplier_contact_code: '',
+                                      supplier_contact_name: '',
+                                      supplier_contact_tel: '',
+                                    }
                                   : { operator_code: '' }),
                             });
                           }}
-                          className={fieldClass}
+                          className={`${fieldClass} ${ownOp ? 'bg-emerald-400 border-emerald-600' : ''}`}
                         />
                       </label>
                       <label className="block">
@@ -1270,10 +1360,11 @@ export default function CraneProApp() {
                           value={row.supplier_name || ''}
                           items={supplierItems}
                           disabled={hasOp && !hasSup}
-                          placeholder={hasOp ? '自社オペ中' : '検索ワード3文字'}
+                          placeholder={hasOp ? '自社オペ中' : '名前・カナ・漢字・英字'}
                           onSelect={(name) => applySupplier(row, name)}
                           className={fieldClass}
                         />
+                        {contactChooser(row, (patch) => handleUpdateField(row.id, patch), fieldClass, 'supplier')}
                       </label>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
@@ -1302,19 +1393,21 @@ export default function CraneProApp() {
                     <label className="block">
                       <span className="text-[11px] font-extrabold text-slate-500">受付機種</span>
                       <NamePicker
+                        freeText
                         value={row.requested_model || ''}
                         items={modelItems}
-                        placeholder="検索ワード3文字"
+                        placeholder="選ぶか、直接入力"
                         onSelect={(name) => handleUpdateField(row.id, { requested_model: name })}
                         className={fieldClass}
                       />
                     </label>
                     <label className="block">
                       <span className="text-[11px] font-extrabold text-slate-500">備考</span>
+                      {siteAddress && <div className="mb-1 text-sm font-bold text-slate-900">{siteAddress}</div>}
                       <input
                         type="text"
                         value={row.notes || ''}
-                        placeholder="備考"
+                        placeholder={siteAddress ? '追記' : '備考'}
                         onChange={(e) => handleUpdateField(row.id, { notes: e.target.value })}
                         className={fieldClass}
                       />
@@ -1397,15 +1490,21 @@ export default function CraneProApp() {
           onClose={() => setContactDraft(null)}
           onCreated={(contact) => {
             setContacts((current) => [...current, contact]);
-            handleUpdateField(contactDraft.rowId, {
-              contact_code: contact.code,
-              contact_name: contact.name,
-              contact_tel: contact.tel,
-            });
+            const patch =
+              contactDraft.target === 'supplier'
+                ? {
+                    supplier_contact_code: contact.code,
+                    supplier_contact_name: contact.name,
+                    supplier_contact_tel: contact.tel,
+                  }
+                : {
+                    contact_code: contact.code,
+                    contact_name: contact.name,
+                    contact_tel: contact.tel,
+                  };
+            handleUpdateField(contactDraft.rowId, patch);
             setSelectedJob((current) =>
-              current && current.id === contactDraft.rowId
-                ? { ...current, contact_code: contact.code, contact_name: contact.name, contact_tel: contact.tel }
-                : current
+              current && current.id === contactDraft.rowId ? { ...current, ...patch } : current
             );
             setContactDraft(null);
             showToast(`担当者コード ${contact.code} を登録しました`);
@@ -1717,6 +1816,7 @@ export default function CraneProApp() {
                                   site_code: hit.code || '',
                                   ...(hit.customer_name ? { customer_name: hit.customer_name } : {}),
                                   ...(hit.customer_code ? { customer_code: hit.customer_code } : {}),
+                                  ...(hit.address ? { site_address: hit.address } : {}),
                                 }
                               : {}),
                           });
@@ -1743,14 +1843,62 @@ export default function CraneProApp() {
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-slate-600 mb-1">現場住所</label>
-                      <input
-                        type="text"
-                        value={selectedJob.site_address || ''}
-                        onChange={(e) =>
-                          setSelectedJob({ ...selectedJob, site_address: e.target.value })
-                        }
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={selectedJob.site_address || ''}
+                          placeholder={selectedJob.site_address ? '' : addressOf(selectedJob)}
+                          onChange={(e) =>
+                            setSelectedJob({ ...selectedJob, site_address: e.target.value })
+                          }
+                          className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold"
+                        />
+                        {addressOf(selectedJob) && (
+                          <button
+                            type="button"
+                            onClick={() => openMap(addressOf(selectedJob))}
+                            className="shrink-0 h-11 px-3 rounded-xl border border-slate-300 text-sm font-extrabold"
+                          >
+                            地図
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-1">庸車（仕入先）</label>
+                      <NamePicker
+                        value={selectedJob.supplier_name || ''}
+                        items={supplierItems}
+                        placeholder="名前・カナ・漢字・英字"
+                        onSelect={(name) => {
+                          const hit = customers.find(
+                            (customer) => customer.name === name && String(customer.partner_type || '').includes('仕入')
+                          );
+                          setSelectedJob({
+                            ...selectedJob,
+                            supplier_name: name,
+                            supplier_code: hit?.code || '',
+                            supplier_contact_code: '',
+                            supplier_contact_name: '',
+                            supplier_contact_tel: '',
+                            ...(name ? { operator_name: '', operator_code: '' } : {}),
+                          });
+                        }}
                         className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold"
                       />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-1">庸車の担当者</label>
+                      {contactChooser(
+                        selectedJob,
+                        (patch) => setSelectedJob({ ...selectedJob, ...patch }),
+                        'w-full h-11 px-3 rounded-xl border border-slate-300 font-bold bg-white',
+                        'supplier'
+                      ) || (
+                        <p className="h-11 px-3 rounded-xl bg-slate-100 flex items-center text-sm font-bold text-slate-500">
+                          先に庸車を選んでください
+                        </p>
+                      )}
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-slate-600 mb-1">現場担当者</label>
@@ -1890,6 +2038,7 @@ export default function CraneProApp() {
     {attachJobId && companyId && (
       <AttachDialog companyId={companyId} dispatchId={attachJobId} onClose={() => setAttachJobId(null)} />
     )}
+    {mapAddress && <WhiteMapDialog address={mapAddress} onClose={() => setMapAddress('')} />}
     </>
   );
 }

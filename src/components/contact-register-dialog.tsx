@@ -8,6 +8,7 @@ export type ContactDraft = {
   rowId: string;
   customerCode: string;
   customerName: string;
+  target?: 'job' | 'supplier';
 };
 
 type CreatedContact = {
@@ -95,7 +96,7 @@ export default function ContactRegisterDialog({ companyId, draft, onClose, onCre
       >
         <h2 className="text-xl font-extrabold">担当者を登録</h2>
         <p className="mt-1 text-sm font-bold text-slate-600">
-          {draft.customerName || '得意先未入力'} の担当者として、担当者マスタに追加します。
+          {draft.customerName || '会社未入力'} の担当者として、担当者マスタに追加します。
         </p>
         <label className="block mt-4 text-xs font-extrabold text-slate-600">
           担当者コード
