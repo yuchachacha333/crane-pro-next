@@ -148,7 +148,7 @@ export default function CraneProApp() {
   const [contactDraft, setContactDraft] = useState<ContactDraft | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [attachJobId, setAttachJobId] = useState<string | null>(null);
-  const [mapAddress, setMapAddress] = useState('');
+  const [mapTarget, setMapTarget] = useState<{ address: string; date: string; siteName: string } | null>(null);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -539,9 +539,10 @@ export default function CraneProApp() {
     );
     return String(site?.address || '');
   };
-  const openMap = (address: string) => {
+  const openMap = (row: DispatchRecord) => {
+    const address = addressOf(row);
     if (!address) return;
-    setMapAddress(address);
+    setMapTarget({ address, date: row.work_date, siteName: row.site_name || '現場' });
   };
   const isOwnOperator = (name: string) =>
     operators.some((op) => String(op.name || '').trim() && String(op.name).trim() === String(name || '').trim());
@@ -1097,7 +1098,7 @@ export default function CraneProApp() {
                             {addressOf(row) && (
                               <button
                                 type="button"
-                                onClick={() => openMap(addressOf(row))}
+                                onClick={() => openMap(row)}
                                 className="shrink-0 h-11 px-2 text-[11px] font-extrabold text-slate-700 hover:bg-slate-100"
                               >
                                 地図
@@ -1300,7 +1301,7 @@ export default function CraneProApp() {
                         className={fieldClass}
                       />
                       {addressOf(row) && (
-                        <button type="button" onClick={() => openMap(addressOf(row))} className="mt-1 text-xs font-extrabold text-slate-700 underline">
+                        <button type="button" onClick={() => openMap(row)} className="mt-1 text-xs font-extrabold text-slate-700 underline">
                           地図を開く
                         </button>
                       )}
@@ -1856,7 +1857,7 @@ export default function CraneProApp() {
                         {addressOf(selectedJob) && (
                           <button
                             type="button"
-                            onClick={() => openMap(addressOf(selectedJob))}
+                            onClick={() => openMap(selectedJob)}
                             className="shrink-0 h-11 px-3 rounded-xl border border-slate-300 text-sm font-extrabold"
                           >
                             地図
@@ -2038,7 +2039,14 @@ export default function CraneProApp() {
     {attachJobId && companyId && (
       <AttachDialog companyId={companyId} dispatchId={attachJobId} onClose={() => setAttachJobId(null)} />
     )}
-    {mapAddress && <WhiteMapDialog address={mapAddress} onClose={() => setMapAddress('')} />}
+    {mapTarget && (
+      <WhiteMapDialog
+        address={mapTarget.address}
+        date={mapTarget.date}
+        siteName={mapTarget.siteName}
+        onClose={() => setMapTarget(null)}
+      />
+    )}
     </>
   );
 }

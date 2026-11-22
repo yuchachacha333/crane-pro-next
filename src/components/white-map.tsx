@@ -1,9 +1,12 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
+import { downloadMapWord } from '@/lib/map-word';
 
 type Props = {
   address: string;
+  date: string;
+  siteName: string;
   onClose: () => void;
 };
 
@@ -20,7 +23,7 @@ type CaptureOptions = DisplayMediaStreamOptions & {
   monitorTypeSurfaces?: 'include' | 'exclude';
 };
 
-export default function WhiteMapDialog({ address, onClose }: Props) {
+export default function WhiteMapDialog({ address, date, siteName, onClose }: Props) {
   const sheetRef = useRef<HTMLDivElement>(null);
   const [src, setSrc] = useState('');
   const [place, setPlace] = useState('');
@@ -99,18 +102,14 @@ export default function WhiteMapDialog({ address, onClose }: Props) {
       const canvas = cropMap(bitmap, sheet);
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
       if (!blob) throw new Error('empty');
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `地図-${address.replace(/[\\/:*?"<>|]/g, ' ').trim() || '現場'}.png`;
-      link.click();
-      URL.revokeObjectURL(url);
+      const site = siteName.replace(/[\\/:*?"<>|\r\n]/g, ' ').replace(/\s+/g, ' ').trim() || '現場';
+      await downloadMapWord(blob, canvas.width, canvas.height, `${date || '日付なし'}_${site}`);
       setStatus(place || address);
     } catch (error) {
       const name = error instanceof DOMException ? error.name : '';
       if (name === 'NotAllowedError' || name === 'AbortError') setStatus(place || address);
-      else if (name === 'NotSupportedError') setStatus('Chrome または Edge で開くと、地図を画像保存できます');
-      else setStatus('地図の画像を保存できませんでした');
+      else if (name === 'NotSupportedError') setStatus('Chrome または Edge で開くと、ワードに出力できます');
+      else setStatus('ワードに出力できませんでした');
     } finally {
       stream?.getTracks().forEach((track) => track.stop());
       bitmap?.close();
@@ -133,7 +132,7 @@ export default function WhiteMapDialog({ address, onClose }: Props) {
               disabled={!src || saving}
               className="h-10 px-3 rounded-xl bg-slate-900 text-white font-bold disabled:opacity-40"
             >
-              地図を画像保存
+              ワードに出力
             </button>
             <button type="button" onClick={onClose} className="h-10 px-3 rounded-xl border border-slate-300 font-bold">
               閉じる
