@@ -69,19 +69,14 @@ export default function NearbyPartners({ siteName, address, partners, onClose }:
   }, [address, partners, siteName]);
 
   return (
-    <div className="fixed inset-0 z-[90] bg-slate-950/50 flex items-end sm:items-center justify-center p-2">
-      <div className="bg-white text-black w-full max-w-lg max-h-[calc(100vh-1rem)] rounded-2xl shadow-2xl overflow-hidden flex flex-col">
-        <div className="px-4 py-3 border-b border-slate-300 flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-lg font-black text-black">近い仲間</h2>
-            <p className="text-sm font-bold text-black truncate">{status}</p>
-            <p className="text-base font-black text-black mt-1">{address}</p>
-          </div>
-          <button type="button" onClick={onClose} className="h-10 px-3 rounded-xl border border-slate-400 font-black shrink-0">
-            閉じる
-          </button>
+    <div className="fixed inset-0 z-[90] flex h-dvh max-h-dvh flex-col bg-slate-950/50 p-2 pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:items-center sm:justify-center">
+      <div className="flex min-h-0 w-full max-w-lg flex-1 flex-col overflow-hidden rounded-2xl bg-white text-black shadow-2xl sm:max-h-[calc(100dvh-1rem)]">
+        <div className="border-b border-slate-300 px-4 py-3">
+          <h2 className="text-lg font-black text-black">近い仲間</h2>
+          <p className="truncate text-sm font-bold text-black">{status}</p>
+          <p className="mt-1 text-base font-black text-black">{address}</p>
         </div>
-        <ul className="overflow-y-auto">
+        <ul className="min-h-0 flex-1 overflow-y-auto">
           {rows.map((row, index) => (
             <li key={row.id} className="px-4 py-3 border-b border-slate-300">
               <div className="flex items-start gap-3">
@@ -111,6 +106,11 @@ export default function NearbyPartners({ siteName, address, partners, onClose }:
             </li>
           ))}
         </ul>
+        <div className="shrink-0 border-t border-slate-300 p-3">
+          <button type="button" onClick={onClose} className="h-12 w-full rounded-xl border border-slate-400 font-black">
+            閉じる
+          </button>
+        </div>
       </div>
     </div>
   );

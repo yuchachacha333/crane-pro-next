@@ -1468,40 +1468,39 @@ export default function CraneProApp() {
                   </div>
                   )}
 
-                  {siteAddress && (
-                    <div className="mt-3 grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => openMap(row)}
-                        className="h-11 w-full rounded-xl border border-slate-300 bg-white font-extrabold"
-                      >
-                        地図
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => openNearby(row)}
-                        className="h-11 w-full rounded-xl bg-slate-900 text-white font-extrabold"
-                      >
-                        探す
-                      </button>
-                    </div>
-                  )}
-
-                  <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-end text-sm">
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => handleCopyRow(row)}
-                        className="p-2 rounded-lg border border-slate-200 text-slate-600"
-                      >
-                        <Copy className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteRow(row.id)}
-                        className="p-2 rounded-lg border border-rose-200 text-rose-600"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
+                  <div className="mt-3 flex items-center gap-2 border-t border-slate-100 pt-3">
+                    {siteAddress && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => openMap(row)}
+                          className="h-11 min-w-16 flex-1 rounded-xl border border-slate-300 bg-white font-extrabold"
+                        >
+                          地図
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openNearby(row)}
+                          className="h-11 min-w-16 flex-1 rounded-xl bg-slate-900 font-extrabold text-white"
+                        >
+                          探す
+                        </button>
+                      </>
+                    )}
+                    <button
+                      onClick={() => handleCopyRow(row)}
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-600"
+                      title="この行をコピー"
+                    >
+                      <Copy className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteRow(row.id)}
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-rose-200 text-rose-600"
+                      title="削除"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
                 );
