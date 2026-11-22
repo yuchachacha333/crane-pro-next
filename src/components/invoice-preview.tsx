@@ -67,10 +67,9 @@ export default function InvoicePreview({
           <button
             type="button"
             onClick={() => shareSheetPages('請求書', shareFile).catch(() => undefined)}
-            className="h-10 px-4 rounded-lg bg-white font-extrabold text-slate-800 disabled:opacity-50"
-            disabled={!shareFile}
+            className="h-10 px-4 rounded-lg bg-white font-extrabold text-slate-800"
           >
-            {shareFile ? '共有' : '準備中'}
+            共有
           </button>
           <button type="button" onClick={onClose} className="h-10 px-4 rounded-lg bg-white font-extrabold text-slate-800">
             閉じる

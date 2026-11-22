@@ -558,6 +558,12 @@ export async function createSheetFile(title: string) {
 }
 
 export async function shareSheetPages(title: string, prepared?: File | null) {
+  if (isAppleTouch()) {
+    // iOS/iPadOS はHTML→画像PDFで表の文字と罫線がずれるため、
+    // WebKit自身のPDF（印刷プレビュー右下の共有ボタン）を使う。
+    printPages();
+    return;
+  }
   const file = prepared || (await createSheetFile(title));
   if (!file) return;
   if (navigator.share) {
@@ -621,36 +627,47 @@ function printPages() {
   const sheetH = orient === 'landscape' ? '210mm' : '297mm';
   // Chromium の端数による空白ページだけを避けるため、縮小は目立たない2%に留める。
   const frameH = orient === 'landscape' ? '206mm' : '292mm';
-  const css =
+  document.querySelector('.native-print-stage')?.remove();
+  document.querySelector('#native-print-style')?.remove();
+  const style = document.createElement('style');
+  style.id = 'native-print-style';
+  style.textContent =
+    `.native-print-stage{display:none}` +
+    `@media print{` +
     `@page{size:A4 ${orient};margin:0}` +
-    'html,body{margin:0;padding:0;background:#fff;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
-    'body{font-family:"Yu Gothic","Yu Gothic UI","Hiragino Sans",Meiryo,sans-serif}' +
-    `.print-page{position:relative;width:${sheetW};height:${frameH};overflow:hidden;break-inside:avoid;page-break-inside:avoid}` +
-    '.print-page + .print-page{break-before:page;page-break-before:always}' +
-    `.sheet{position:absolute !important;left:1% !important;top:0 !important;box-shadow:none !important;margin:0 !important;overflow:hidden !important;box-sizing:border-box !important;width:${sheetW} !important;height:${sheetH} !important;min-height:0 !important;transform:scale(.98);transform-origin:top left}` +
-    'table{width:100%;border-collapse:collapse;table-layout:fixed}' +
-    'td{-webkit-print-color-adjust:exact;print-color-adjust:exact}';
-  let body = '';
+    `html,body{margin:0!important;padding:0!important;background:#fff!important;color:#000!important;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}` +
+    `body>*:not(.native-print-stage){display:none!important}` +
+    `.native-print-stage{display:block!important;font-family:"Yu Gothic","Yu Gothic UI","Hiragino Sans",Meiryo,sans-serif}` +
+    `.native-print-page{position:relative;width:${sheetW};height:${frameH};overflow:hidden;break-inside:avoid;page-break-inside:avoid}` +
+    `.native-print-page+.native-print-page{break-before:page;page-break-before:always}` +
+    `.native-print-sheet{position:absolute!important;left:1%!important;top:0!important;box-shadow:none!important;margin:0!important;overflow:hidden!important;box-sizing:border-box!important;width:${sheetW}!important;height:${sheetH}!important;min-height:0!important;transform:scale(.98)!important;transform-origin:top left!important}` +
+    `.native-print-sheet table{width:100%!important;border-collapse:collapse!important;table-layout:fixed!important}` +
+    `.native-print-sheet td{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}` +
+    `}`;
+  document.head.appendChild(style);
+  const stage = document.createElement('div');
+  stage.className = 'native-print-stage';
   pages.forEach((page) => {
-    body += `<div class="print-page"><div class="sheet" style="${page.getAttribute('style') || ''}">${page.innerHTML}</div></div>`;
+    const frame = document.createElement('div');
+    frame.className = 'native-print-page';
+    const sheet = page.cloneNode(true) as HTMLElement;
+    sheet.className = 'native-print-sheet';
+    frame.appendChild(sheet);
+    stage.appendChild(frame);
   });
-  const frame = document.createElement('iframe');
-  frame.setAttribute('style', 'position:fixed;left:-10000px;top:0;width:1400px;height:1800px;border:0');
-  document.body.appendChild(frame);
-  const doc = frame.contentDocument;
-  const printer = frame.contentWindow;
-  if (!doc || !printer) {
-    frame.remove();
-    return;
-  }
-  doc.open();
-  doc.write(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title> </title><style>${css}</style></head><body>${body}</body></html>`);
-  doc.close();
-  printer.onafterprint = () => frame.remove();
-  window.setTimeout(() => {
-    printer.focus();
-    printer.print();
-  }, 200);
+  document.body.appendChild(stage);
+  const clean = () => {
+    stage.remove();
+    style.remove();
+    window.removeEventListener('afterprint', clean);
+  };
+  window.addEventListener('afterprint', clean);
+  window.print();
+}
+
+function isAppleTouch() {
+  if (typeof navigator === 'undefined') return false;
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
 function pageFrame(layout: SheetLayout): CSSProperties {
@@ -740,10 +757,9 @@ export default function PrintPreview({
           <button
             type="button"
             onClick={() => shareSheetPages(TITLES[kind], shareFile).catch(() => undefined)}
-            className="h-10 px-4 rounded-lg bg-white font-extrabold text-slate-800 disabled:opacity-50"
-            disabled={!shareFile}
+            className="h-10 px-4 rounded-lg bg-white font-extrabold text-slate-800"
           >
-            {shareFile ? '共有' : '準備中'}
+            共有
           </button>
           <button type="button" onClick={onClose} className="h-10 px-4 rounded-lg bg-white font-extrabold text-slate-800">
             閉じる
