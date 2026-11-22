@@ -12,11 +12,9 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* 白い画面に淡い文字が出ないよう、端末のダークモードでも常にライト表示にする */
+:root {
+  color-scheme: light;
 }
 
 body {

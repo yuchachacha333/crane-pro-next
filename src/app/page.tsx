@@ -158,7 +158,20 @@ export default function CraneProApp() {
   };
 
   // 今日の日付は描画後に決める。初期描画で new Date() すると Next.js が事前レンダリングを止める。
+  // 請求明細の「訂正処理」から来た場合は、その日付の配車を開き、詳細（売上詳細・付帯明細）を自動で開く
+  const [pendingJob, setPendingJob] = useState<{ id: string; tab: 'sales' | 'hire' | 'operator' } | null>(null);
+  const [fromBilling, setFromBilling] = useState(false);
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const date = params.get('date') || '';
+    const job = params.get('job') || '';
+    if (job && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      const tab = params.get('tab');
+      setBoardDate(date);
+      setPendingJob({ id: job, tab: tab === 'hire' || tab === 'operator' ? tab : 'sales' });
+      setFromBilling(params.get('from') === 'billing');
+      return;
+    }
     setBoardDate(getTodayIso());
   }, []);
 
@@ -381,6 +394,15 @@ export default function CraneProApp() {
     }
     setExtras(loaded);
   };
+
+  useEffect(() => {
+    if (!pendingJob || loading) return;
+    const target = dispatches.find((row) => row.id === pendingJob.id);
+    if (!target) return;
+    setPendingJob(null);
+    openJobModal(target).then(() => setJobTab(pendingJob.tab));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingJob, loading, dispatches]);
 
   // 詳細モーダルの保存
   const saveJobModal = async () => {
@@ -1092,6 +1114,7 @@ export default function CraneProApp() {
                           <NamePicker
                             value={row.supplier_name || ''}
                             items={supplierItems}
+                            title="庸車先を選ぶ"
                             disabled={hasOp && !hasSup}
                             placeholder={hasOp ? '自社オペ中' : '名前・カナ・漢字・英字'}
                             onSelect={(name) => applySupplier(row, name)}
@@ -1105,6 +1128,7 @@ export default function CraneProApp() {
                             <NamePicker
                               value={row.customer_name || ''}
                               items={customerItems}
+                              title="得意先を選ぶ"
                               placeholder="名前・カナ・漢字・英字"
                               onSelect={(name) => applyCustomer(row, name)}
                               className="w-full h-11 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none"
@@ -1119,6 +1143,7 @@ export default function CraneProApp() {
                             <SuggestInput
                               value={row.site_name || ''}
                               placeholder="現場名"
+                              title="現場を選ぶ"
                               options={siteChoices(row.customer_code || '', row.customer_name || '', row.site_name || '')}
                               onChange={(val) => {
                                 const hit = sites.find(
@@ -1162,6 +1187,7 @@ export default function CraneProApp() {
                             freeText
                             value={row.requested_model || ''}
                             items={modelItems}
+                            title="機種を選ぶ"
                             placeholder="選ぶか、直接入力"
                             onSelect={(name) => handleUpdateField(row.id, { requested_model: name })}
                             className={`w-full h-9 px-2 rounded-lg border font-extrabold text-xs outline-none focus:ring-2 focus:ring-teal-600 ${badgeColor}`}
@@ -1329,10 +1355,22 @@ export default function CraneProApp() {
                   {editingId === row.id && (
                   <div className="space-y-2">
                     <label className="block">
+                      <span className="text-[11px] font-extrabold text-slate-500">得意先</span>
+                      <NamePicker
+                        value={row.customer_name || ''}
+                        items={customerItems}
+                        title="得意先を選ぶ"
+                        placeholder="名前・カナ・漢字・英字"
+                        onSelect={(name) => applyCustomer(row, name)}
+                        className={fieldClass}
+                      />
+                    </label>
+                    <label className="block">
                       <span className="text-[11px] font-extrabold text-slate-500">配車先（現場）</span>
                       <SuggestInput
                         value={row.site_name || ''}
                         placeholder="現場名"
+                        title="現場を選ぶ"
                         options={siteChoices(row.customer_code || '', row.customer_name || '', row.site_name || '')}
                         onChange={(val) => {
                           const hit = sites.find(
@@ -1347,16 +1385,6 @@ export default function CraneProApp() {
                           commitSite(row, hit?.name || option.value, hit);
                         }}
                         onCreate={() => registerSite(row)}
-                        className={fieldClass}
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="text-[11px] font-extrabold text-slate-500">得意先</span>
-                      <NamePicker
-                        value={row.customer_name || ''}
-                        items={customerItems}
-                        placeholder="名前・カナ・漢字・英字"
-                        onSelect={(name) => applyCustomer(row, name)}
                         className={fieldClass}
                       />
                     </label>
@@ -1404,6 +1432,7 @@ export default function CraneProApp() {
                         <NamePicker
                           value={row.supplier_name || ''}
                           items={supplierItems}
+                          title="庸車先を選ぶ"
                           disabled={hasOp && !hasSup}
                           placeholder={hasOp ? '自社オペ中' : '名前・カナ・漢字・英字'}
                           onSelect={(name) => applySupplier(row, name)}
@@ -1440,6 +1469,7 @@ export default function CraneProApp() {
                         freeText
                         value={row.requested_model || ''}
                         items={modelItems}
+                        title="機種を選ぶ"
                         placeholder="選ぶか、直接入力"
                         onSelect={(name) => handleUpdateField(row.id, { requested_model: name })}
                         className={fieldClass}
@@ -1574,6 +1604,15 @@ export default function CraneProApp() {
         />
       )}
 
+      {selectedJob && fromBilling && (
+        <button
+          type="button"
+          onClick={() => window.history.back()}
+          className="fixed left-2 top-2 z-[200] h-10 rounded-xl bg-teal-700 px-3 text-sm font-black text-white shadow-xl"
+        >
+          ← 請求明細へ戻る
+        </button>
+      )}
       {selectedJob && (
         <div className="fixed inset-0 z-40 bg-slate-950/50 backdrop-blur-xs flex items-center justify-center p-3 md:p-6">
           <div className="bg-slate-50 w-full max-w-4xl max-h-[92vh] rounded-2xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
@@ -1861,6 +1900,7 @@ export default function CraneProApp() {
                       <SuggestInput
                         value={selectedJob.site_name || ''}
                         placeholder="現場名"
+                        title="現場を選ぶ"
                         options={siteChoices(
                           selectedJob.customer_code || '',
                           selectedJob.customer_name || '',
@@ -1940,6 +1980,7 @@ export default function CraneProApp() {
                       <NamePicker
                         value={selectedJob.supplier_name || ''}
                         items={supplierItems}
+                        title="庸車先を選ぶ"
                         placeholder="名前・カナ・漢字・英字"
                         onSelect={(name) => {
                           const hit = customers.find(

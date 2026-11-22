@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import PickerSheet, { makeHaystack, useTouchPad, type SheetItem } from './picker-sheet';
 
 export type SuggestOption = {
   id: string;
@@ -17,6 +18,7 @@ type SuggestInputProps = {
   onPick: (option: SuggestOption) => void;
   onCreate?: () => void;
   className?: string;
+  title?: string;
 };
 
 export default function SuggestInput({
@@ -27,7 +29,21 @@ export default function SuggestInput({
   onPick,
   onCreate,
   className,
+  title,
 }: SuggestInputProps) {
+  const touch = useTouchPad();
+  const [sheet, setSheet] = useState(false);
+  const sheetItems = useMemo<SheetItem[]>(
+    () =>
+      options.map((option) => ({
+        id: option.id,
+        label: option.value,
+        sub: option.hint,
+        sort: option.value,
+        haystack: makeHaystack(option.value, option.hint),
+      })),
+    [options]
+  );
   const [open, setOpen] = useState(false);
   const [place, setPlace] = useState({ top: 0, left: 0, width: 280 });
   const box = useRef<HTMLDivElement>(null);
@@ -54,6 +70,40 @@ export default function SuggestInput({
     const rect = box.current?.getBoundingClientRect();
     if (!rect) return;
     setPlace({ top: rect.bottom + 4, left: Math.max(8, rect.left), width: Math.max(rect.width, 280) });
+  }
+
+  if (touch) {
+    return (
+      <div ref={box} className="relative min-w-0 w-full flex-1">
+        <input
+          type="text"
+          readOnly
+          value={value}
+          placeholder={placeholder || 'タップして選ぶ'}
+          onClick={() => setSheet(true)}
+          className={` cursor-pointer`}
+        />
+        {sheet && (
+          <PickerSheet
+            title={title || placeholder || '選択'}
+            items={sheetItems}
+            current={value}
+            kana={false}
+            onPick={(id) => {
+              const option = options.find((o) => o.id === id);
+              if (option) onPick(option);
+              setSheet(false);
+            }}
+            onFreeText={(text) => {
+              onChange(text);
+              setSheet(false);
+            }}
+            onCreate={onCreate ? () => { onCreate(); setSheet(false); } : undefined}
+            onClose={() => setSheet(false)}
+          />
+        )}
+      </div>
+    );
   }
 
   return (

@@ -267,6 +267,7 @@ function FormPage({
         fontFamily: '"Yu Gothic","Yu Gothic UI","Hiragino Sans",Meiryo,sans-serif',
       }}
     >
+      <div style={{ position: 'relative' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', overflow: 'visible' }}>
         <colgroup>
           {widths.map((width, index) => (
@@ -311,6 +312,40 @@ function FormPage({
           ))}
         </tbody>
       </table>
+      {(layout.drawings || []).map((item, index) => {
+        const box: CSSProperties = {
+          position: 'absolute',
+          left: `${item.x * 100}%`,
+          width: `${item.w * 100}%`,
+          top: `${(item.y * scale) / 100}pt`,
+          height: `${(item.h * scale) / 100}pt`,
+          pointerEvents: 'none',
+        };
+        if (item.kind === 'image') {
+          // eslint-disable-next-line @next/next/no-img-element
+          return <img key={index} src={item.src} alt="" style={{ ...box, objectFit: 'contain' }} />;
+        }
+        return (
+          <div
+            key={index}
+            style={{
+              ...box,
+              boxSizing: 'border-box',
+              padding: '2pt 7pt',
+              overflow: 'hidden',
+              fontSize: `${(item.size * scale) / 100}pt`,
+              lineHeight: 1.35,
+              whiteSpace: 'pre-wrap',
+              color: '#000',
+            }}
+          >
+            {item.lines.map((line, i) => (
+              <div key={i}>{line || '\u00a0'}</div>
+            ))}
+          </div>
+        );
+      })}
+      </div>
     </article>
   );
 }

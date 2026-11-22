@@ -16,7 +16,19 @@ export type SheetCell = {
   formula: boolean;
 };
 
+export type SheetDrawing = {
+  kind: 'image' | 'text';
+  src: string;
+  lines: string[];
+  size: number;
+  x: number; // 表の幅に対する割合 0〜1
+  w: number;
+  y: number; // 表の上端からの pt
+  h: number;
+};
+
 export type SheetLayout = {
+  drawings: SheetDrawing[];
   scale: number;
   orientation: string;
   defaultRowHeight: number;
@@ -250,7 +262,94 @@ function layoutOf(sheet: string, styles: string, stringsXml: string): SheetLayou
     cols: colsOf(sheet, count),
     rows,
     merges: mergesOf(sheet),
+    drawings: [],
   };
+}
+
+// Excel の列幅(文字数)→ EMU
+function colEmu(width: number) {
+  const px = Math.trunc(((256 * width + Math.trunc(128 / 7)) / 256) * 7);
+  return px * 9525;
+}
+
+type Anchor = { col: number; colOff: number; row: number; rowOff: number };
+
+function anchorOf(block: string, tag: 'from' | 'to'): Anchor | null {
+  const m = block.match(
+    new RegExp(
+      `<xdr:${tag}><xdr:col>(\\d+)</xdr:col><xdr:colOff>(-?\\d+)</xdr:colOff><xdr:row>(\\d+)</xdr:row><xdr:rowOff>(-?\\d+)</xdr:rowOff></xdr:${tag}>`
+    )
+  );
+  if (!m) return null;
+  return { col: Number(m[1]), colOff: Number(m[2]), row: Number(m[3]), rowOff: Number(m[4]) };
+}
+
+// 図形（テキストボックス）と画像（印鑑など）を読み取る
+async function drawingsOf(zip: JSZip, layout: SheetLayout, fileName: string) {
+  const xml = await zipText(zip, /xl\/drawings\/drawing\d+\.xml$/i);
+  if (!xml) return [];
+  const relsXml = await zipText(zip, /xl\/drawings\/_rels\/drawing\d+\.xml\.rels$/i);
+  const targets: Record<string, string> = {};
+  for (const tag of relsXml.match(/<Relationship\b[^>]*\/?>/g) || []) targets[attr(tag, 'Id')] = attr(tag, 'Target');
+
+  const widths = layout.cols.map(colEmu);
+  const totalWidth = widths.reduce((sum, w) => sum + w, 0) || 1;
+  const heights = layout.rows.map((row) => (row.height || layout.defaultRowHeight) * 12700);
+  const xAt = (a: Anchor) => {
+    let sum = 0;
+    for (let c = 0; c < a.col && c < widths.length; c++) sum += widths[c];
+    return sum + a.colOff;
+  };
+  const yAt = (a: Anchor) => {
+    let sum = 0;
+    for (let r = 0; r < a.row; r++) sum += heights[r] ?? layout.defaultRowHeight * 12700;
+    return sum + a.rowOff;
+  };
+
+  const out: SheetDrawing[] = [];
+  const blocks = xml.split(/<xdr:twoCellAnchor\b[^>]*>/).slice(1);
+  for (const block of blocks) {
+    const from = anchorOf(block, 'from');
+    const to = anchorOf(block, 'to');
+    if (!from || !to) continue;
+    const geometry = {
+      x: xAt(from) / totalWidth,
+      w: Math.max(0, xAt(to) - xAt(from)) / totalWidth,
+      y: yAt(from) / 12700,
+      h: Math.max(0, yAt(to) - yAt(from)) / 12700,
+    };
+    if (/<xdr:pic>/.test(block)) {
+      const rid = block.match(/r:embed="([^"]+)"/)?.[1] || '';
+      const target = targets[rid] || '';
+      const ext = target.split('.').pop()?.toLowerCase() || '';
+      const base = fileName.replace(/\.xlsx$/i, '');
+      let bytes: Buffer | null = null;
+      let mime = 'image/png';
+      if (ext === 'png' || ext === 'jpg' || ext === 'jpeg') {
+        const entry = zip.file('xl/' + target.replace(/^\.\.\//, ''));
+        if (entry) bytes = await entry.async('nodebuffer');
+        mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+      } else {
+        // EMF/WMF はブラウザで表示できないため、あらかじめ PNG にしたものを templates に置く
+        try {
+          bytes = await readFile(path.join(process.cwd(), 'templates', `${base}-stamp.png`));
+        } catch {
+          bytes = null;
+        }
+      }
+      if (bytes) out.push({ kind: 'image', src: `data:${mime};base64,${bytes.toString('base64')}`, lines: [], size: 0, ...geometry });
+    } else if (/<xdr:sp\b/.test(block)) {
+      const body = block.match(/<xdr:txBody>([\s\S]*?)<\/xdr:txBody>/)?.[1] || '';
+      const lines = (body.match(/<a:p>[\s\S]*?<\/a:p>|<a:p\/>/g) || []).map((p) =>
+        decodeXml([...p.matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1]).join(''))
+      );
+      while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+      if (!lines.length) continue;
+      const size = Number(body.match(/\bsz="(\d+)"/)?.[1] || 1000) / 100;
+      out.push({ kind: 'text', src: '', lines, size, ...geometry });
+    }
+  }
+  return out;
 }
 
 async function zipText(zip: JSZip, pattern: RegExp) {
@@ -273,5 +372,11 @@ export async function readPrintLayout(fileName: string): Promise<SheetLayout> {
   const styles = await zipText(zip, /styles\.xml$/i);
   const strings = await zipText(zip, /sharedStrings\.xml$/i);
   if (!sheet || !styles) throw new Error('ひな形のシートが見つかりません');
-  return layoutOf(sheet, styles, strings);
+  const layout = layoutOf(sheet, styles, strings);
+  try {
+    layout.drawings = await drawingsOf(zip, layout, fileName);
+  } catch {
+    layout.drawings = [];
+  }
+  return layout;
 }

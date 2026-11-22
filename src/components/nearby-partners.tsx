@@ -107,7 +107,7 @@ export default function NearbyPartners({ siteName, address, partners, onClose }:
           ))}
         </ul>
         <div className="shrink-0 border-t border-slate-300 p-3">
-          <button type="button" onClick={onClose} className="h-12 w-full rounded-xl border border-slate-400 font-black">
+          <button type="button" onClick={onClose} className="h-12 w-full rounded-xl border-2 border-slate-700 font-black text-black">
             閉じる
           </button>
         </div>

@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import PickerSheet, { makeHaystack, readingOf, stripCompany, toHiragana, useTouchPad, type SheetItem } from './picker-sheet';
 
 export type NameItem = {
   id: string;
@@ -9,43 +10,6 @@ export type NameItem = {
   kana?: string;
   searchWord?: string;
 };
-
-const ROWS = ['あ', 'か', 'さ', 'た', 'な', 'は', 'ま', 'や', 'ら', 'わ', '他'] as const;
-
-const ROW_OF: Record<string, (typeof ROWS)[number]> = {};
-for (const [row, chars] of [
-  ['あ', 'あいうえお'],
-  ['か', 'かきくけこがぎぐげご'],
-  ['さ', 'さしすせそざじずぜぞ'],
-  ['た', 'たちつてとだぢづでど'],
-  ['な', 'なにぬねの'],
-  ['は', 'はひふへほばびぶべぼぱぴぷぺぽ'],
-  ['ま', 'まみむめも'],
-  ['や', 'やゆよ'],
-  ['ら', 'らりるれろ'],
-  ['わ', 'わをん'],
-] as const) {
-  for (const char of chars) ROW_OF[char] = row;
-}
-
-function stripCompany(name: string) {
-  return String(name || '')
-    .replace(/株式会社|有限会社|合同会社|㈱|㈲|（株）|（有）|\(株\)|\(有\)/g, '')
-    .replace(/\s+/g, '')
-    .trim();
-}
-
-function toHiragana(value: string) {
-  return String(value || '')
-    .normalize('NFKC')
-    .replace(/[\u30a1-\u30f6]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0x60));
-}
-
-function rowOf(item: NameItem) {
-  const source = toHiragana(item.kana || stripCompany(item.name));
-  const head = source.replace(/^[ぁぃぅぇぉっゃゅょ]/, '')[0] || '';
-  return ROW_OF[head] || '他';
-}
 
 function matches(item: NameItem, raw: string) {
   const text = raw.normalize('NFKC').trim();
@@ -66,18 +30,6 @@ function matches(item: NameItem, raw: string) {
   );
 }
 
-function useTouchPad() {
-  const [touch, setTouch] = useState(false);
-  useEffect(() => {
-    const query = window.matchMedia('(pointer: coarse), (max-width: 1023px)');
-    const apply = () => setTouch(query.matches);
-    apply();
-    query.addEventListener('change', apply);
-    return () => query.removeEventListener('change', apply);
-  }, []);
-  return touch;
-}
-
 export default function NamePicker({
   value,
   items,
@@ -85,6 +37,7 @@ export default function NamePicker({
   disabled,
   className,
   freeText,
+  title,
   onSelect,
 }: {
   value: string;
@@ -93,14 +46,15 @@ export default function NamePicker({
   disabled?: boolean;
   className?: string;
   freeText?: boolean;
+  title?: string;
   onSelect: (name: string) => void;
 }) {
   const touch = useTouchPad();
   const box = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
+  const [sheet, setSheet] = useState(false);
   const [showAll, setShowAll] = useState(false);
-  const [row, setRow] = useState<(typeof ROWS)[number] | ''>('');
   const [place, setPlace] = useState({ top: 0, left: 0, width: 280 });
 
   const filterText = freeText ? value : query;
@@ -110,10 +64,18 @@ export default function NamePicker({
     return items.filter((item) => matches(item, text)).slice(0, 40);
   }, [filterText, items]);
 
-  const byRow = useMemo(() => {
-    if (!row) return [];
-    return items.filter((item) => rowOf(item) === row).slice(0, 80);
-  }, [items, row]);
+  const sheetItems = useMemo<SheetItem[]>(
+    () =>
+      items.map((item) => ({
+        id: item.id,
+        label: stripCompany(item.name) || item.name,
+        sub: item.searchWord || undefined,
+        sort: readingOf(item.kana, item.name),
+        haystack: makeHaystack(item.name, stripCompany(item.name), item.kana, item.searchWord),
+      })),
+    [items]
+  );
+  const nameById = useMemo(() => new Map(items.map((item) => [item.id, item.name])), [items]);
 
   function placeList() {
     const rect = box.current?.getBoundingClientRect();
@@ -139,12 +101,38 @@ export default function NamePicker({
     setQuery('');
     setOpen(false);
     setShowAll(false);
-    setRow('');
+    setSheet(false);
   }
 
-  const browsing = showAll || (Boolean(freeText) && !filterText.trim() && !row);
-  const list = browsing ? items.slice(0, 80) : !filterText.trim() ? byRow : found;
-  const waiting = touch && !filterText.trim() && !row && !showAll;
+  const browsing = showAll || (Boolean(freeText) && !filterText.trim());
+  const list = browsing ? items.slice(0, 80) : found;
+
+  // スマホ・iPad: 画面いっぱいの専用選択画面
+  if (touch) {
+    return (
+      <div ref={box} className="relative min-w-0 w-full">
+        <input
+          type="text"
+          readOnly
+          value={value}
+          placeholder={placeholder || 'タップして選ぶ'}
+          disabled={disabled}
+          onClick={() => !disabled && setSheet(true)}
+          className={`${className || ''} cursor-pointer`}
+        />
+        {sheet && (
+          <PickerSheet
+            title={title || placeholder || '選択'}
+            items={sheetItems}
+            current={value}
+            onPick={(id) => choose(nameById.get(id) || '')}
+            onFreeText={freeText ? (text) => choose(text) : undefined}
+            onClose={() => setSheet(false)}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div ref={box} className="relative min-w-0 w-full">
@@ -165,7 +153,6 @@ export default function NamePicker({
         }}
         onChange={(event) => {
           setShowAll(false);
-          setRow('');
           if (freeText) onSelect(event.target.value);
           else setQuery(event.target.value);
           setOpen(true);
@@ -182,7 +169,6 @@ export default function NamePicker({
             event.preventDefault();
             if (disabled) return;
             setShowAll(true);
-            setRow('');
             setOpen(true);
             placeList();
           }}
@@ -198,25 +184,6 @@ export default function NamePicker({
             className="fixed z-[80] max-h-80 overflow-auto rounded-xl border border-slate-200 bg-white shadow-xl"
             style={{ top: place.top, left: place.left, width: Math.min(Math.max(place.width, 280), window.innerWidth - 16) }}
           >
-            {touch && (
-              <div className="grid grid-cols-6 gap-1 p-2">
-                {ROWS.map((label) => (
-                  <button
-                    key={label}
-                    type="button"
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      setRow(label);
-                      setQuery('');
-                      setShowAll(false);
-                    }}
-                    className={`h-10 rounded-lg text-sm font-extrabold ${row === label ? 'bg-teal-700 text-white' : 'bg-slate-100 text-slate-800'}`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            )}
             {list.map((item) => (
               <button
                 key={item.id}
@@ -231,8 +198,11 @@ export default function NamePicker({
                 {item.searchWord ? <span className="block text-[11px] font-medium text-slate-500">{item.searchWord}</span> : null}
               </button>
             ))}
-            {waiting && <p className="px-3 py-3 text-xs font-bold text-slate-400">文字を入力するか、あかさたなを押してください</p>}
-            {!waiting && list.length === 0 && <p className="px-3 py-3 text-xs font-bold text-slate-400">該当がありません</p>}
+            {list.length === 0 && (
+              <p className="px-3 py-3 text-xs font-bold text-slate-400">
+                {filterText.trim() ? '該当がありません' : '文字を入力してください'}
+              </p>
+            )}
           </div>,
           document.body
         )}

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { Pencil } from 'lucide-react';
 import AppSidebar from '@/components/app-sidebar';
 import InvoicePreview from '@/components/invoice-preview';
 import { billingPeriod, closeKeyOf, closeLabel } from '@/lib/billing';
@@ -29,9 +30,13 @@ type Job = {
   total_sales_amount: number | null;
   notes: string | null;
   is_cancelled: boolean | null;
+  start_time: string | null;
+  end_time: string | null;
+  work_hours: number | null;
 };
 
-type BillJob = Job & { amount: number; missing: boolean };
+type ExtraRow = { name: string; quantity: number; unit: string; unit_price: number; amount: number };
+type BillJob = Job & { amount: number; missing: boolean; base: number | null; extraLines: ExtraRow[]; extraTotal: number };
 type SiteGroup = { name: string; amount: number; jobs: BillJob[] };
 type Group = {
   code: string;
@@ -46,10 +51,21 @@ function money(value: number): string {
   return `¥${Math.round(value).toLocaleString('ja-JP')}`;
 }
 
+// 売上合計(total_sales_amount)は「基本＋付帯」で保存されるため、付帯を二重に足さない。
+// 基本は売上単価を優先し、無ければ合計から付帯を引いて求める。
 function priced(job: Job, extra: number) {
-  const base = job.total_sales_amount == null ? null : Number(job.total_sales_amount);
-  const valid = base != null && Number.isFinite(base);
-  return { amount: (valid ? base : 0) + extra, missing: !valid && !extra };
+  let base: number | null = null;
+  if (job.unit_price != null && Number.isFinite(Number(job.unit_price))) base = Number(job.unit_price);
+  else if (job.total_sales_amount != null && Number.isFinite(Number(job.total_sales_amount))) {
+    base = Number(job.total_sales_amount) - extra;
+  }
+  return { base, amount: (base ?? 0) + extra, missing: base == null && !extra };
+}
+
+function timeRange(job: Job): string {
+  const start = (job.start_time || '').trim();
+  const end = (job.end_time || '').trim();
+  return start || end ? `${start || '—'}〜${end || '—'}` : '—';
 }
 
 export default function BillingClient() {
@@ -58,7 +74,7 @@ export default function BillingClient() {
   const [close, setClose] = useState('');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [extras, setExtras] = useState<Record<string, number>>({});
+  const [extras, setExtras] = useState<Record<string, ExtraRow[]>>({});
   const [detail, setDetail] = useState<{ code: string; mode: 'flat' | 'site' } | null>(null);
   const [invoice, setInvoice] = useState<{ name: string; postal: string; address: string; lines: InvoiceLine[] } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -118,7 +134,7 @@ export default function BillingClient() {
     supabase
       .from('dispatches')
       .select(
-        'id, work_date, customer_code, customer_name, site_name, requested_model, operator_name, supplier_name, unit_price, total_sales_amount, notes, is_cancelled'
+        'id, work_date, customer_code, customer_name, site_name, requested_model, operator_name, supplier_name, unit_price, total_sales_amount, notes, is_cancelled, start_time, end_time, work_hours'
       )
       .eq('company_id', companyId)
       .gte('work_date', nextPeriod.start)
@@ -133,14 +149,28 @@ export default function BillingClient() {
           return;
         }
         const rows = (data ?? []) as Job[];
-        const extraMap: Record<string, number> = {};
+        const extraMap: Record<string, ExtraRow[]> = {};
         const ids = rows.map((row) => row.id);
         for (let index = 0; index < ids.length; index += 100) {
           const slice = ids.slice(index, index + 100);
-          const extraRes = await supabase.from('dispatch_extras').select('dispatch_id, amount').in('dispatch_id', slice);
+          const extraRes = await supabase
+            .from('dispatch_extras')
+            .select('dispatch_id, item_name, quantity, unit, unit_price, amount, sort_order')
+            .in('dispatch_id', slice)
+            .order('sort_order', { ascending: true });
           for (const line of extraRes.data ?? []) {
             const id = String(line.dispatch_id);
-            extraMap[id] = (extraMap[id] ?? 0) + Number(line.amount || 0);
+            const quantity = Number(line.quantity ?? 1);
+            const unitPrice = Number(line.unit_price ?? 0);
+            const amount = line.amount != null ? Number(line.amount) : quantity * unitPrice;
+            if (!amount && !line.item_name) continue;
+            (extraMap[id] ??= []).push({
+              name: String(line.item_name || '付帯'),
+              quantity,
+              unit: String(line.unit || ''),
+              unit_price: unitPrice,
+              amount,
+            });
           }
         }
         if (cancelled) return;
@@ -177,7 +207,9 @@ export default function BillingClient() {
         skippedCount += 1;
         continue;
       }
-      const price = priced(job, extras[job.id] ?? 0);
+      const extraLines = extras[job.id] ?? [];
+      const extraTotal = extraLines.reduce((sum, line) => sum + line.amount, 0);
+      const price = priced(job, extraTotal);
       const current = bucket.get(code) ?? {
         code,
         name: nameByCode.get(code) || job.customer_name || code,
@@ -186,7 +218,7 @@ export default function BillingClient() {
         amount: 0,
         missing: 0,
       };
-      current.jobs.push({ ...job, amount: price.amount, missing: price.missing });
+      current.jobs.push({ ...job, amount: price.amount, missing: price.missing, base: price.base, extraLines, extraTotal });
       current.amount += price.amount;
       if (price.missing) current.missing += 1;
       bucket.set(code, current);
@@ -244,21 +276,51 @@ export default function BillingClient() {
     });
   }
 
-  function jobRow(job: BillJob, siteName: string) {
-    return (
-      <div key={job.id} className="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-2 text-sm">
-        <div>
-          <div className="font-extrabold">
-            {formatJapaneseMonthDay(job.work_date)}　{job.requested_model || '機種未入力'}
-          </div>
-          <div className="text-xs font-bold text-slate-500">
-            {[siteName, job.operator_name || job.supplier_name || '担当未入力'].filter(Boolean).join('　')}
-          </div>
-        </div>
-        <div className="font-extrabold">{job.missing ? '単価未入力' : money(job.amount)}</div>
-      </div>
-    );
+  // 請求明細の1件分（本体の行＋付帯売上の行）
+  function jobRows(job: BillJob) {
+    const hours = job.work_hours == null ? '—' : `${job.work_hours}`;
+    const fix = `/?job=${encodeURIComponent(job.id)}&date=${job.work_date}&tab=sales&from=billing`;
+    return [
+      <tr key={job.id} className="border-t border-slate-200 align-middle">
+        <td className="px-3 py-3 whitespace-nowrap font-black">{formatJapaneseMonthDay(job.work_date)}</td>
+        <td className="px-3 py-3 font-bold">{job.requested_model || '機種未入力'}</td>
+        <td className="px-3 py-3 whitespace-nowrap font-bold">{timeRange(job)}</td>
+        <td className="px-3 py-3 text-right font-bold">1</td>
+        <td className="px-3 py-3 font-bold">式</td>
+        <td className="px-3 py-3 text-right font-bold">{hours}</td>
+        <td className="px-3 py-3 text-right whitespace-nowrap font-bold">{job.base == null ? '未入力' : money(job.base)}</td>
+        <td className="px-3 py-3 font-bold">{job.site_name || '現場未入力'}</td>
+        <td className="px-3 py-3 text-right whitespace-nowrap font-black">{job.missing ? '単価未入力' : money(job.amount)}</td>
+        <td className="sticky right-0 bg-white px-2 py-2 text-center shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.25)]">
+          <a
+            href={fix}
+            title="訂正処理（配車の詳細・売上明細へ）"
+            className="inline-flex min-w-16 flex-col items-center rounded-xl border-2 border-teal-700 px-2 py-1 text-teal-800"
+          >
+            <Pencil className="h-5 w-5" />
+            <span className="text-[11px] font-black leading-tight">訂正処理</span>
+          </a>
+        </td>
+      </tr>,
+      ...job.extraLines.map((line, index) => (
+        <tr key={`${job.id}-x${index}`} className="bg-amber-50 text-amber-950">
+          <td className="px-3 py-1.5" />
+          <td className="px-3 py-1.5 font-extrabold" colSpan={2}>
+            └ 付帯売上　{line.name}
+          </td>
+          <td className="px-3 py-1.5 text-right font-bold">{line.quantity}</td>
+          <td className="px-3 py-1.5 font-bold">{line.unit}</td>
+          <td className="px-3 py-1.5" />
+          <td className="px-3 py-1.5 text-right whitespace-nowrap font-bold">{money(line.unit_price)}</td>
+          <td className="px-3 py-1.5 text-xs font-bold text-amber-800">上の行の金額に含む</td>
+          <td className="px-3 py-1.5 text-right whitespace-nowrap font-bold">（{money(line.amount)}）</td>
+          <td className="sticky right-0 bg-amber-50 px-2" />
+        </tr>
+      )),
+    ];
   }
+
+  const detailHead = ['作業日', '商品名', '時間帯（開始〜終了）', '数量', '単位', '時間', '売上単価', '現場名', '金額（付帯込）', '訂正'];
 
   return (
     <div className={`min-h-screen bg-slate-100 text-slate-900 flex flex-col md:flex-row ${invoice ? 'print:hidden' : ''}`}>
@@ -276,12 +338,12 @@ export default function BillingClient() {
               type="date"
               value={anchor}
               onChange={(event) => setAnchor(event.target.value)}
-              className="h-11 rounded-xl border border-slate-300 px-3 font-bold"
+              className="h-14 min-w-52 rounded-2xl border-2 border-slate-400 bg-white px-4 text-xl font-black text-black"
             />
             <select
               value={close}
               onChange={(event) => setClose(event.target.value)}
-              className="h-11 rounded-xl border border-slate-300 px-3 font-bold"
+              className="h-14 min-w-44 rounded-2xl border-2 border-slate-400 bg-white px-4 text-xl font-black text-black"
             >
               {closes.map((key) => (
                 <option key={key} value={key}>
@@ -327,17 +389,50 @@ export default function BillingClient() {
                 {detail?.mode === 'site' ? '現場別請求明細' : '請求明細'}　{selected.jobs.length}件　{amountLabel(selected)}
               </p>
             </div>
-            {detail?.mode === 'site'
-              ? selected.sites.map((site) => (
-                  <div key={site.name}>
-                    <div className="flex items-center justify-between bg-slate-50 px-4 py-2 text-sm font-extrabold">
-                      <span>{site.name}</span>
-                      <span>{money(site.amount)}</span>
-                    </div>
-                    {site.jobs.map((job) => jobRow(job, ''))}
-                  </div>
-                ))
-              : selected.jobs.map((job) => jobRow(job, job.site_name || '現場未入力'))}
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[980px] border-collapse text-base">
+                <thead>
+                  <tr className="bg-slate-800 text-left text-sm text-white">
+                    {detailHead.map((label, index) => (
+                      <th
+                        key={label}
+                        className={`px-3 py-2 font-extrabold whitespace-nowrap ${index === 9 ? 'sticky right-0 bg-slate-800 text-center' : ''} ${[3, 5, 6, 8].includes(index) ? 'text-right' : ''}`}
+                      >
+                        {label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {detail?.mode === 'site'
+                    ? selected.sites.map((site) => (
+                        <React.Fragment key={site.name}>
+                          <tr className="border-t-2 border-slate-300 bg-slate-100">
+                            <td colSpan={8} className="px-3 py-2 font-black">
+                              現場：{site.name}
+                            </td>
+                            <td className="px-3 py-2 text-right whitespace-nowrap font-black">小計 {money(site.amount)}</td>
+                            <td className="sticky right-0 bg-slate-100" />
+                          </tr>
+                          {site.jobs.flatMap((job) => jobRows(job))}
+                        </React.Fragment>
+                      ))
+                    : selected.jobs.flatMap((job) => jobRows(job))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-4 border-slate-800 bg-slate-50">
+                    <td colSpan={8} className="px-3 py-4 text-right text-lg font-black">
+                      累計金額（{selected.jobs.length}件
+                      {selected.jobs.some((job) => job.extraTotal) &&
+                        `／うち付帯売上 ${money(selected.jobs.reduce((sum, job) => sum + job.extraTotal, 0))}`}
+                      ）
+                    </td>
+                    <td className="px-3 py-4 text-right whitespace-nowrap text-2xl font-black">{money(selected.amount)}</td>
+                    <td className="sticky right-0 bg-slate-50" />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
           </section>
         ) : (
           <div className="space-y-3">

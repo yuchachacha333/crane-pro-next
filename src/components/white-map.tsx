@@ -170,8 +170,8 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
           <div className="min-w-0">
-            <h2 className="text-lg font-extrabold">モノトーン地図</h2>
-            <p className="truncate text-xs font-bold text-slate-800">
+            <h2 className="text-lg font-black text-black">モノトーン地図</h2>
+            <p className="truncate text-sm font-bold text-black">
               {status === place
                 ? phone
                   ? `${fileBase}.pdf として開きます`
@@ -188,18 +188,19 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
             >
               ワードに出力
             </button>
-            <button type="button" onClick={onClose} className="h-10 rounded-xl border border-slate-300 px-3 font-bold">
+            <button type="button" onClick={onClose} className="h-10 rounded-xl border-2 border-slate-700 px-3 font-black text-black">
               閉じる
             </button>
           </div>
         </div>
         <div className="flex min-h-0 flex-1 flex-col bg-white">
-          <p className="shrink-0 border-b border-slate-200 px-4 py-2 text-base font-extrabold">{address}</p>
+          <p className="shrink-0 border-b border-slate-200 px-4 py-2 text-lg font-black text-black">{address}</p>
           <div ref={mapRef} className="relative min-h-0 flex-1 overflow-hidden bg-white">
             {src && layoutReady ? (
               <iframe
                 title={`${address}のヤフー地図`}
                 src={src}
+                style={{ filter: 'grayscale(1) contrast(1.7) brightness(0.92)' }}
                 className={
                   phone
                     ? 'absolute -left-[260px] -top-[150px] h-[calc(100%+150px)] w-[calc(100%+260px)]'
@@ -235,7 +236,7 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
           >
             PDFに出力
           </a>
-          <button type="button" onClick={onClose} className="h-12 rounded-xl border border-slate-300 px-4 font-black">
+          <button type="button" onClick={onClose} className="h-12 rounded-xl border-2 border-slate-700 px-4 font-black text-black">
             閉じる
           </button>
         </div>
