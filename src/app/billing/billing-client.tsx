@@ -127,7 +127,14 @@ export default function BillingClient() {
   }, [customers]);
 
   useEffect(() => {
-    if (!close && closes.length) setClose(closes[0]);
+    if (close || !closes.length) return;
+    // 今日の日付にいちばん近い締め日を初期表示にする
+    const now = new Date();
+    const today = now.getDate();
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const dayOf = (key: string) => (key === 'end' ? monthEnd : Number(key));
+    const nearest = [...closes].sort((x, y) => Math.abs(dayOf(x) - today) - Math.abs(dayOf(y) - today))[0];
+    setClose(nearest);
   }, [close, closes]);
 
   const period = anchor && close ? billingPeriod(close, anchor) : null;
@@ -359,9 +366,9 @@ export default function BillingClient() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <input
-              type="date"
-              value={anchor}
-              onChange={(event) => setAnchor(event.target.value)}
+              type="month"
+              value={anchor.slice(0, 7)}
+              onChange={(event) => event.target.value && setAnchor(`-01`)}
               className="h-14 min-w-52 rounded-2xl border-2 border-slate-400 bg-white px-4 text-xl font-black text-black"
             />
             <select

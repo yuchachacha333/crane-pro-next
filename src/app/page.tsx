@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Plus,
+  Printer,
   Copy,
   ClipboardPaste,
   Trash2,
@@ -283,6 +284,18 @@ export default function CraneProApp() {
     };
   }, [companyId, boardMonth, dispatches.map((row) => `${row.id}:${isUnassigned(row) ? 1 : 0}`).join(',')]);
 
+  // 追加した行が画面外にあるときは、そこまでなめらかに移動して強調する
+  const revealRow = (id: string) => {
+    window.setTimeout(() => {
+      const el = Array.from(document.querySelectorAll<HTMLElement>('[data-row-id]')).find(
+        (node) => node.dataset.rowId === id && node.offsetParent !== null
+      );
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.animate([{ boxShadow: '0 0 0 4px rgba(20,184,166,.9)' }, { boxShadow: '0 0 0 0 rgba(20,184,166,0)' }], { duration: 1600 });
+    }, 150);
+  };
+
   // 新規配車行の追加
   const handleAddRow = async () => {
     if (!companyId || !boardDate) return;
@@ -315,6 +328,7 @@ export default function CraneProApp() {
       showToast('追加エラー: ' + error.message);
     } else if (data) {
       setDispatches((prev) => [...prev, data]);
+      revealRow(data.id);
       showToast('新規配車行を追加しました');
     }
   };
@@ -920,97 +934,98 @@ export default function CraneProApp() {
       {/* メインコンテンツ */}
       <main className="flex-1 min-w-0 p-4 md:p-6 pb-24">
         {/* 上部アクションバー */}
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-          <div>
-            <h1 className="text-2xl md:text-3xl font-extrabold text-slate-900 tracking-tight">配車管理ボード</h1>
-            <p className="text-xs md:text-sm text-slate-500 mt-0.5">
-              オペレーター、得意先、現場、機種はマスタから選べます。作業時間は昼休憩1時間を自動控除します
+        <div className="mb-3 md:mb-5">
+          {contactsLocked && (
+            <p className="mb-2 text-sm font-bold text-amber-800">
+              担当者マスタをまだ読めません。Supabase の SQL エディタで supabase/enable_master_access.sql を実行すると、得意先の担当者と携帯番号が出ます。
             </p>
-            {contactsLocked && (
-              <p className="mt-2 text-sm font-bold text-amber-800">
-                担当者マスタをまだ読めません。Supabase の SQL エディタで supabase/enable_master_access.sql を実行すると、得意先の担当者と携帯番号が出ます。
-              </p>
-            )}
-          </div>
+          )}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-2 md:flex-nowrap md:gap-4">
+            <h1 className="order-1 shrink-0 text-xl md:text-3xl font-extrabold text-slate-900 tracking-tight">配車管理</h1>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {copiedRow && (
-              <button
-                onClick={handlePasteRow}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-amber-100 text-amber-900 border border-amber-300 font-bold text-sm hover:bg-amber-200 transition"
-              >
-                <ClipboardPaste className="w-4 h-4" />
-                コピー行を貼り付け
-              </button>
-            )}
-            <button
-              onClick={handleAddRow}
-              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#121826] text-white font-bold text-sm shadow-sm hover:bg-slate-800 transition"
-            >
-              <Plus className="w-4 h-4" />
-              新規配車行追加
-            </button>
-            <button
-              onClick={() => openPrint('board')}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-white text-slate-700 border border-slate-300 font-bold text-sm hover:bg-slate-50 transition"
-            >
-              配車表
-            </button>
-          </div>
-        </div>
-
-        {/* 日付・曜日・六曜ナビゲーションバー */}
-        <div className="bg-white rounded-xl md:rounded-2xl border border-slate-200 shadow-sm px-2 py-2 md:p-4 mb-3 md:mb-5 flex flex-wrap items-center justify-between gap-1.5 md:gap-4">
-          <div className="flex items-center gap-1.5 md:gap-2">
-            <button
-              onClick={() => setBoardDate(shiftIsoDate(boardDate, -1))}
-              className="w-8 h-8 md:w-11 md:h-12 rounded-lg md:rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-700"
-              aria-label="前日"
-            >
-              <ChevronLeft className="w-4 h-4 md:w-6 md:h-6" />
-            </button>
-
-            <div className="flex items-center md:items-baseline gap-1.5 md:gap-3 px-2 md:px-4 h-8 md:h-auto md:py-2 rounded-lg md:rounded-xl bg-sky-50 border border-sky-200">
-              <span className="text-sm md:text-3xl font-black text-slate-900 leading-none">
-                {boardDate ? formatJapaneseMonthDay(boardDate) : '…'}
-              </span>
-              <span className="text-xs md:text-lg font-bold text-sky-900 leading-none">（{weekdayLabel}）</span>
-              {rokuyoLabel && (
-                <span
-                  className={`px-1.5 md:px-2.5 py-0.5 rounded-full text-[10px] md:text-sm font-extrabold leading-none ${
-                    rokuyoLabel === '大安'
-                      ? 'bg-rose-100 text-rose-800'
-                      : rokuyoLabel === '仏滅'
-                      ? 'bg-slate-200 text-slate-700'
-                      : 'bg-white text-sky-900 border border-sky-200'
-                  }`}
+            <div className="order-2 ml-auto flex items-center gap-1.5 md:order-3 md:gap-2 md:shrink-0">
+              {copiedRow && (
+                <button
+                  onClick={handlePasteRow}
+                  aria-label="コピー行を貼り付け"
+                  className="inline-flex h-9 items-center gap-1.5 px-2.5 md:h-11 md:px-3.5 rounded-xl bg-amber-100 text-amber-900 border border-amber-300 font-bold text-sm hover:bg-amber-200 transition"
                 >
-                  {rokuyoLabel}
-                </span>
+                  <ClipboardPaste className="w-4 h-4" />
+                  <span className="hidden md:inline">コピー行を貼り付け</span>
+                </button>
               )}
+              <button
+                onClick={handleAddRow}
+                aria-label="新規配車行追加"
+                className="inline-flex h-9 items-center gap-1.5 px-3 md:h-11 md:px-4 rounded-xl bg-[#121826] text-white font-bold text-sm shadow-sm hover:bg-slate-800 transition"
+              >
+                <Plus className="w-4 h-4" />
+                <span className="hidden md:inline">新規配車行追加</span>
+              </button>
+              <button
+                onClick={() => openPrint('board')}
+                aria-label="配車表"
+                className="inline-flex h-9 items-center gap-1.5 px-2.5 md:h-11 md:px-3.5 rounded-xl bg-white text-slate-700 border border-slate-300 font-bold text-sm hover:bg-slate-50 transition"
+              >
+                <Printer className="w-4 h-4" />
+                <span className="hidden sm:inline">配車表</span>
+              </button>
             </div>
 
-            <button
-              onClick={() => setBoardDate(shiftIsoDate(boardDate, 1))}
-              className="w-8 h-8 md:w-11 md:h-12 rounded-lg md:rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 flex items-center justify-center text-slate-700"
-              aria-label="翌日"
-            >
-              <ChevronRight className="w-4 h-4 md:w-6 md:h-6" />
-            </button>
+            {/* 日付・曜日・六曜（タップでカレンダー） */}
+            <div className="order-3 flex w-full items-center justify-center gap-1.5 md:order-2 md:w-auto md:flex-1 md:gap-2">
+              <button
+                onClick={() => setBoardDate(shiftIsoDate(boardDate, -1))}
+                className="w-9 h-9 md:w-11 md:h-11 rounded-lg md:rounded-xl border border-slate-300 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-700"
+                aria-label="前日"
+              >
+                <ChevronLeft className="w-4 h-4 md:w-6 md:h-6" />
+              </button>
 
-            <button
-              onClick={() => setBoardDate(getTodayIso())}
-              className="px-2.5 md:px-3.5 h-8 md:h-12 rounded-lg md:rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-xs md:text-sm font-bold text-slate-700"
-            >
-              今日
-            </button>
+              <label className="relative flex h-9 md:h-11 min-w-0 flex-1 md:flex-none cursor-pointer items-center justify-center gap-1.5 md:gap-3 px-3 md:px-5 rounded-lg md:rounded-xl bg-sky-50 border border-sky-200">
+                <span className="text-sm md:text-2xl font-black text-slate-900 leading-none whitespace-nowrap">
+                  {boardDate ? formatJapaneseMonthDay(boardDate) : '…'}
+                </span>
+                <span className="text-xs md:text-base font-bold text-sky-900 leading-none whitespace-nowrap">（{weekdayLabel}）</span>
+                {rokuyoLabel && (
+                  <span
+                    className={`px-1.5 md:px-2.5 py-0.5 rounded-full text-[10px] md:text-sm font-extrabold leading-none ${
+                      rokuyoLabel === '大安'
+                        ? 'bg-rose-100 text-rose-800'
+                        : rokuyoLabel === '仏滅'
+                        ? 'bg-slate-200 text-slate-700'
+                        : 'bg-white text-sky-900 border border-sky-200'
+                    }`}
+                  >
+                    {rokuyoLabel}
+                  </span>
+                )}
+                <input
+                  type="date"
+                  value={boardDate}
+                  aria-label="カレンダーから日付を選ぶ"
+                  onClick={(e) => e.currentTarget.showPicker?.()}
+                  onChange={(e) => e.target.value && setBoardDate(e.target.value)}
+                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                />
+              </label>
+
+              <button
+                onClick={() => setBoardDate(shiftIsoDate(boardDate, 1))}
+                className="w-9 h-9 md:w-11 md:h-11 rounded-lg md:rounded-xl border border-slate-300 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-700"
+                aria-label="翌日"
+              >
+                <ChevronRight className="w-4 h-4 md:w-6 md:h-6" />
+              </button>
+
+              <button
+                onClick={() => setBoardDate(getTodayIso())}
+                className="px-3 h-9 md:h-11 rounded-lg md:rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-xs md:text-sm font-bold text-slate-700"
+              >
+                今日
+              </button>
+            </div>
           </div>
-          <input
-            type="date"
-            value={boardDate}
-            onChange={(e) => e.target.value && setBoardDate(e.target.value)}
-            className="h-8 md:h-11 w-[9.2rem] md:w-auto px-2 md:px-3 rounded-lg md:rounded-xl border border-slate-300 bg-white font-bold text-xs md:text-sm text-slate-800"
-          />
         </div>
 
         {monthDays.length > 0 && (
@@ -1120,6 +1135,7 @@ export default function CraneProApp() {
                     return (
                       <tr
                         key={row.id}
+                        data-row-id={row.id}
                         className={`transition ${
                           row.is_cancelled
                             ? 'bg-rose-50/60 text-slate-400'
@@ -1368,6 +1384,7 @@ export default function CraneProApp() {
                 return (
                 <div
                   key={row.id}
+                  data-row-id={row.id}
                   className={`rounded-2xl border p-4 shadow-sm ${
                     row.is_cancelled
                       ? 'bg-rose-50/70 border-rose-200'

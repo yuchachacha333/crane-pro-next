@@ -317,7 +317,7 @@ function FormPage({
                 if (!raw && /^\d{4}年\d{1,2}月\d{1,2}日/.test(text)) text = today;
                 // 罫線のある表のマス目だけ切り詰め、罫線のない文章（振込先・会社情報など）は折り返し／はみ出して表示する
                 const clipCell = clip && Boolean(edges.left || edges.right || edges.top || edges.bottom);
-                const flow = cell.wrap
+                const flow = cell.wrap && !(clip && !clipCell)
                   ? { whiteSpace: 'pre-wrap' as const, wordBreak: 'break-word' as const }
                   : { whiteSpace: 'pre' as const, overflow: 'visible', wordBreak: 'normal' as const };
                 return (
@@ -336,7 +336,7 @@ function FormPage({
                       ...(cell.color ? { color: cell.color } : {}),
                       ...(cell.diag
                         ? {
-                            backgroundImage: 'linear-gradient(to top right, transparent calc(50% - 0.5px), #000 calc(50% - 0.5px), #000 calc(50% + 0.5px), transparent calc(50% + 0.5px))',
+                            backgroundImage: 'linear-gradient(to top left, transparent calc(50% - 0.5px), #000 calc(50% - 0.5px), #000 calc(50% + 0.5px), transparent calc(50% + 0.5px))',
                           }
                         : {}),
                       WebkitPrintColorAdjust: 'exact',
@@ -546,8 +546,8 @@ function printPages() {
     `@page{size:A4 ${orient};margin:0}` +
     'html,body{margin:0;padding:0;background:#fff;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
     'body{font-family:"Yu Gothic","Yu Gothic UI","Hiragino Sans",Meiryo,sans-serif}' +
-    '.sheet{box-shadow:none !important;margin:0 !important;page-break-after:always}' +
-    '.sheet:last-child{page-break-after:auto}' +
+    '.sheet{box-shadow:none !important;margin:0 !important;page-break-after:always;break-after:page;overflow:hidden;min-height:0 !important;height:' + (orient === 'landscape' ? '209mm' : '296mm') + ' !important}' +
+    '.sheet:last-child{page-break-after:auto;break-after:auto}' +
     'table{width:100%;border-collapse:collapse;table-layout:fixed}' +
     'td{-webkit-print-color-adjust:exact;print-color-adjust:exact}';
   let body = '';

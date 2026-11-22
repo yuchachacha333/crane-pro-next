@@ -7,7 +7,7 @@ const itemClass =
   'flex items-center gap-2 px-3 py-2 md:justify-center xl:justify-start xl:gap-3 xl:py-2.5 md:px-0 xl:px-3 rounded-xl font-medium text-sm transition whitespace-nowrap md:w-full';
 
 const ITEMS: { key: NavKey; href: string; label: string; Icon: typeof Calendar }[] = [
-  { key: 'board', href: '/', label: '配車ボード', Icon: Calendar },
+  { key: 'board', href: '/', label: '配車管理', Icon: Calendar },
   { key: 'find', href: '/find-crane', label: 'クレーンを探す', Icon: MapPin },
   { key: 'billing', href: '/billing', label: '請求・締め集計', Icon: Receipt },
   { key: 'sales', href: '/sales', label: '売上集計', Icon: BarChart3 },

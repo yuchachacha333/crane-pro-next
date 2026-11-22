@@ -159,10 +159,11 @@ export function fillInvoiceLayout(
     return null;
   };
   for (const row of layout.rows) {
-    const value = summaryValue(summaryKind(row));
+    const kind = summaryKind(row);
+    const value = summaryValue(kind);
     if (value == null) continue;
     for (const cell of row.cells) {
-      if (moneyText(cell.text) || cell.formula) cell.text = comma(value);
+      if (moneyText(cell.text) || cell.formula) cell.text = (kind === 'bill' ? '¥' : '') + comma(value);
     }
   }
   return { layout, omitted: Math.max(0, lines.length - slots.length), warning: '' };
