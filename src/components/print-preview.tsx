@@ -209,11 +209,13 @@ function FormPage({
   job,
   sites = [],
   raw = false,
+  clip = false,
 }: {
   layout: SheetLayout;
   job?: PrintJob;
   sites?: SiteHit[];
   raw?: boolean;
+  clip?: boolean;
 }) {
   const scale = Number(layout.scale) || 100;
   const values = raw || !job ? {} : formValues(job, sites);
@@ -287,11 +289,13 @@ function FormPage({
                       borderTop: edgeWidth(edges.top),
                       borderBottom: edgeWidth(edges.bottom),
                       ...flow,
-                      position: text && !cell.wrap ? 'relative' : undefined,
-                      overflow: text && !cell.wrap ? 'visible' : undefined,
+                      position: !clip && text && !cell.wrap ? 'relative' : undefined,
+                      overflow: clip ? 'hidden' : text && !cell.wrap ? 'visible' : undefined,
+                      whiteSpace: clip ? 'nowrap' : flow.whiteSpace,
+                      textOverflow: clip ? 'clip' : undefined,
                     }}
                   >
-                    <SheetSpill cell={cell} text={text} />
+                    {clip ? text : <SheetSpill cell={cell} text={text} />}
                   </td>
                 );
               })}
@@ -411,8 +415,33 @@ function BoardPage({ layout, jobs, date }: { layout: SheetLayout; jobs: PrintJob
   );
 }
 
-export function LayoutSheet({ layout }: { layout: SheetLayout }) {
-  return <FormPage layout={layout} raw />;
+export function LayoutSheet({ layout, clip = false }: { layout: SheetLayout; clip?: boolean }) {
+  return <FormPage layout={layout} raw clip={clip} />;
+}
+
+export async function shareSheetPages(title: string) {
+  const page = document.querySelector('.dispatch-page') as HTMLElement | null;
+  if (!page) return;
+  const html2canvas = (await import('html2canvas')).default;
+  const { jsPDF } = await import('jspdf');
+  const canvas = await html2canvas(page, { scale: 2, backgroundColor: '#ffffff', useCORS: true });
+  const orient = page.getAttribute('data-orient') === 'landscape' ? 'l' : 'p';
+  const pdf = new jsPDF({ orientation: orient, unit: 'mm', format: 'a4' });
+  const width = pdf.internal.pageSize.getWidth();
+  const height = pdf.internal.pageSize.getHeight();
+  pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, width, height);
+  const blob = pdf.output('blob');
+  const file = new File([blob], `${title}.pdf`, { type: 'application/pdf' });
+  if (navigator.canShare?.({ files: [file] })) {
+    await navigator.share({ files: [file], title });
+    return;
+  }
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = file.name;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 export function printSheetPages() {
@@ -508,6 +537,15 @@ export default function PrintPreview({
           >
             印刷
           </button>
+          {kind !== 'board' && (
+            <button
+              type="button"
+              onClick={() => shareSheetPages(TITLES[kind]).catch(() => undefined)}
+              className="h-10 px-4 rounded-lg bg-white font-extrabold text-slate-800"
+            >
+              共有
+            </button>
+          )}
           <button type="button" onClick={onClose} className="h-10 px-4 rounded-lg bg-white font-extrabold text-slate-800">
             閉じる
           </button>

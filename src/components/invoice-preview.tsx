@@ -63,7 +63,7 @@ export default function InvoicePreview({
         {note && <p className="mb-3 text-center text-sm font-bold text-amber-800">{note}</p>}
         {error && <p className="text-center font-bold text-rose-700">{error}</p>}
         {!layout && !error && <p className="text-center font-bold text-slate-700">請求書のひな形を読み込んでいます。</p>}
-        {layout && <LayoutSheet layout={layout} />}
+        {layout && <LayoutSheet layout={layout} clip />}
       </div>
     </div>
   );

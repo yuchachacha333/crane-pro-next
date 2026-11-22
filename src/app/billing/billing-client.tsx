@@ -219,7 +219,8 @@ export default function BillingClient() {
   function openInvoice(group: Group) {
     const party = customers.find((customer) => customer.code === group.code);
     const lines: InvoiceLine[] = group.jobs.map((job) => {
-      const shown = job.work_date.replace(/-/g, '/');
+      const parts = String(job.work_date || '').match(/^\d{4}-(\d{2})-(\d{2})/);
+      const shown = parts ? `${Number(parts[1])}/${Number(parts[2])}` : job.work_date;
       const note = [job.notes || '', job.missing ? '単価未入力' : ''].filter(Boolean).join(' ');
       return {
         date: shown,

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 export type SuggestOption = {
   id: string;
@@ -14,6 +15,7 @@ type SuggestInputProps = {
   options: SuggestOption[];
   onChange: (value: string) => void;
   onPick: (option: SuggestOption) => void;
+  onCreate?: () => void;
   className?: string;
 };
 
@@ -23,9 +25,11 @@ export default function SuggestInput({
   options,
   onChange,
   onPick,
+  onCreate,
   className,
 }: SuggestInputProps) {
   const [open, setOpen] = useState(false);
+  const [place, setPlace] = useState({ top: 0, left: 0, width: 280 });
   const box = useRef<HTMLDivElement>(null);
   const shown = useMemo(() => {
     const query = value.trim();
@@ -37,11 +41,20 @@ export default function SuggestInput({
 
   useEffect(() => {
     function close(event: MouseEvent) {
-      if (!box.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target instanceof Element ? event.target : (event.target as Node | null)?.parentElement;
+      if (target && box.current?.contains(target)) return;
+      if (target?.closest('[data-suggest-list]')) return;
+      setOpen(false);
     }
     document.addEventListener('mousedown', close);
     return () => document.removeEventListener('mousedown', close);
   }, []);
+
+  function placeList() {
+    const rect = box.current?.getBoundingClientRect();
+    if (!rect) return;
+    setPlace({ top: rect.bottom + 4, left: Math.max(8, rect.left), width: Math.max(rect.width, 280) });
+  }
 
   return (
     <div ref={box} className="relative min-w-0 w-full flex-1">
@@ -50,33 +63,59 @@ export default function SuggestInput({
         value={value}
         placeholder={placeholder}
         autoComplete="off"
-        onFocus={() => setOpen(true)}
+        onFocus={() => {
+          placeList();
+          setOpen(true);
+        }}
         onChange={(event) => {
           onChange(event.target.value);
+          placeList();
           setOpen(true);
         }}
         className={className}
       />
-      {open && shown.length > 0 && (
-        <ul className="absolute left-0 top-full z-30 mt-1 max-h-64 w-[min(360px,80vw)] overflow-auto rounded-xl border border-slate-200 bg-white shadow-lg">
-          {shown.map((option) => (
-            <li key={option.id}>
-              <button
-                type="button"
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  onPick(option);
-                  setOpen(false);
-                }}
-                className="block w-full px-3 py-2 text-left hover:bg-teal-50"
-              >
-                <span className="block text-sm font-bold text-slate-900">{option.value}</span>
-                {option.hint ? <span className="block text-[11px] font-medium text-slate-500">{option.hint}</span> : null}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      {open &&
+        (shown.length > 0 || onCreate) &&
+        createPortal(
+          <ul
+            data-suggest-list
+            className="fixed z-[80] max-h-64 overflow-auto rounded-xl border border-slate-200 bg-white shadow-xl"
+            style={{ top: place.top, left: place.left, width: Math.min(place.width, window.innerWidth - 16) }}
+          >
+            {shown.map((option) => (
+              <li key={option.id}>
+                <button
+                  type="button"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    onPick(option);
+                    setOpen(false);
+                  }}
+                  className="block w-full px-3 py-2 text-left hover:bg-teal-50"
+                >
+                  <span className="block text-sm font-bold text-slate-900">{option.value}</span>
+                  {option.hint ? <span className="block text-[11px] font-medium text-slate-500">{option.hint}</span> : null}
+                </button>
+              </li>
+            ))}
+            {onCreate && (
+              <li>
+                <button
+                  type="button"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    onCreate();
+                    setOpen(false);
+                  }}
+                  className="block w-full border-t border-slate-100 px-3 py-2 text-left text-sm font-extrabold text-teal-800 hover:bg-teal-50"
+                >
+                  新規登録
+                </button>
+              </li>
+            )}
+          </ul>,
+          document.body
+        )}
     </div>
   );
 }

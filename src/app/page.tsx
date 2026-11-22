@@ -23,6 +23,8 @@ import ContactRegisterDialog, { type ContactDraft } from '@/components/contact-r
 import SiteRegisterDialog, { type SiteDraft } from '@/components/site-register-dialog';
 import PrintPreview, { type PrintKind } from '@/components/print-preview';
 import SuggestInput, { type SuggestOption } from '@/components/suggest-input';
+import NamePicker from '@/components/name-picker';
+import AttachDialog from '@/components/attach-dialog';
 import { supabase, getDefaultCompanyId } from '@/lib/supabase';
 import { sameCode, sameParty, partyKey } from '@/lib/party-name';
 import { toHalfwidthTime } from '@/lib/time-text';
@@ -141,6 +143,7 @@ export default function CraneProApp() {
   const [siteDraft, setSiteDraft] = useState<SiteDraft | null>(null);
   const [contactDraft, setContactDraft] = useState<ContactDraft | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [attachJobId, setAttachJobId] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -474,6 +477,95 @@ export default function CraneProApp() {
       value: site.name,
       hint: site.address || '',
     }));
+  };
+  const customerItems = customers
+    .filter((customer) => customer.name)
+    .map((customer) => ({
+      id: String(customer.id || customer.code),
+      name: String(customer.name),
+      kana: String(customer.kana || ''),
+      searchWord: String(customer.search_word || ''),
+    }));
+  const supplierItems = customers
+    .filter((customer) => customer.name && String(customer.partner_type || '').includes('仕入'))
+    .map((customer) => ({
+      id: String(customer.id || customer.code),
+      name: String(customer.name),
+      kana: String(customer.kana || ''),
+      searchWord: String(customer.search_word || ''),
+    }));
+  const modelItems = models
+    .filter((model) => model.name)
+    .map((model) => ({
+      id: String(model.id || model.code),
+      name: String(model.name),
+      kana: String(model.kana || ''),
+      searchWord: String(model.search_word || model.code || ''),
+    }));
+  const addressOf = (row: DispatchRecord) => {
+    if (row.site_address) return row.site_address;
+    const site = sites.find(
+      (item) => (row.site_code && item.code === row.site_code) || (row.site_name && item.name === row.site_name)
+    );
+    const stored = String(site?.address || '');
+    if (stored) return stored;
+    const name = String(row.site_name || '');
+    if (/[0-9０-９]/.test(name) && /[市区町村郡丁目番地]/.test(name)) return name;
+    return '';
+  };
+  const openMap = (address: string) => {
+    if (!address) return;
+    window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`, '_blank', 'noopener');
+  };
+  const registerSite = (row: DispatchRecord) => {
+    setSiteDraft({
+      rowId: row.id,
+      name: row.site_name,
+      customerCode: row.customer_code || '',
+      customerName: row.customer_name || '',
+      entryTime: row.entry_time || '',
+    });
+  };
+  const applyCustomer = (row: DispatchRecord, val: string) => {
+    const hit = customers.find((customer) => customer.name === val);
+    if (!hit) {
+      handleUpdateField(row.id, {
+        customer_name: val,
+        ...(val ? {} : { customer_code: '', contact_code: '', contact_name: '', contact_tel: '' }),
+      });
+      return;
+    }
+    const people = peopleFor(hit.code || '', hit.name || '');
+    const only = people.length === 1 ? people[0] : null;
+    const changed = (hit.code || '') !== (row.customer_code || '');
+    handleUpdateField(row.id, {
+      customer_name: val,
+      customer_code: hit.code || '',
+      ...(changed
+        ? {
+            site_code: '',
+            site_name: '',
+            contact_code: only?.code || '',
+            contact_name: only?.name || '',
+            contact_tel: only?.tel || '',
+          }
+        : only && !row.contact_name
+          ? { contact_code: only.code, contact_name: only.name, contact_tel: only.tel }
+          : {}),
+    });
+  };
+  const applySupplier = (row: DispatchRecord, val: string) => {
+    const hit = customers.find(
+      (customer) => customer.name === val && String(customer.partner_type || '').includes('仕入')
+    );
+    handleUpdateField(row.id, {
+      supplier_name: val,
+      ...(hit
+        ? { supplier_code: hit.code || '', operator_name: '', operator_code: '' }
+        : val
+          ? { operator_name: '', operator_code: '' }
+          : { supplier_code: '' }),
+    });
   };
   const commitSite = (row: DispatchRecord, value: string, site?: (typeof sites)[number]) => {
     const customer = site?.customer_name
@@ -847,6 +939,13 @@ export default function CraneProApp() {
                               詳細・売上
                             </button>
                             <button
+                              onClick={() => setAttachJobId(row.id)}
+                              title="添付"
+                              className="px-2 py-1.5 rounded-lg bg-slate-100 text-slate-700 font-bold text-xs hover:bg-slate-200"
+                            >
+                              添付
+                            </button>
+                            <button
                               onClick={() => handleCopyRow(row)}
                               title="この行をコピー"
                               className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100"
@@ -883,28 +982,12 @@ export default function CraneProApp() {
 
                         {/* 庸車（オペレーターが入っている場合はロック） */}
                         <td className="p-0 border-r border-slate-200">
-                          <input
-                            type="text"
-                            list="supplier-names"
-                            autoComplete="off"
-                            disabled={hasOp && !hasSup}
+                          <NamePicker
                             value={row.supplier_name || ''}
-                            placeholder={hasOp ? '自社オペ中' : '庸車先入力'}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              const hit = customers.find(
-                                (customer) =>
-                                  customer.name === val && String(customer.partner_type || '').includes('仕入')
-                              );
-                              handleUpdateField(row.id, {
-                                supplier_name: val,
-                                ...(hit
-                                  ? { supplier_code: hit.code || '', operator_name: '', operator_code: '' }
-                                  : val
-                                    ? { operator_name: '', operator_code: '' }
-                                    : { supplier_code: '' }),
-                              });
-                            }}
+                            items={supplierItems}
+                            disabled={hasOp && !hasSup}
+                            placeholder={hasOp ? '自社オペ中' : '検索ワード3文字'}
+                            onSelect={(name) => applySupplier(row, name)}
                             className="w-full h-11 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none disabled:bg-slate-100 disabled:text-slate-400"
                           />
                         </td>
@@ -912,42 +995,12 @@ export default function CraneProApp() {
                         {/* 得意先 */}
                         <td className="p-0 border-r border-slate-200">
                           <div className="flex items-center">
-                            <input
-                              type="text"
-                              list="customer-names"
+                            <NamePicker
                               value={row.customer_name || ''}
-                              placeholder="得意先名"
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                const hit = customers.find((customer) => customer.name === val);
-                                if (!hit) {
-                                  handleUpdateField(row.id, {
-                                    customer_name: val,
-                                    ...(val ? {} : { customer_code: '', contact_code: '', contact_name: '', contact_tel: '' }),
-                                  });
-                                  return;
-                                }
-                                const people = peopleFor(hit.code || '', hit.name || '');
-                                const only = people.length === 1 ? people[0] : null;
-                                const changed = (hit.code || '') !== (row.customer_code || '');
-                                handleUpdateField(row.id, {
-                                  customer_name: val,
-                                  customer_code: hit.code || '',
-                                  ...(changed
-                                    ? {
-                                        site_code: '',
-                                        site_name: '',
-                                        contact_code: only?.code || '',
-                                        contact_name: only?.name || '',
-                                        contact_tel: only?.tel || '',
-                                      }
-                                    : only && !row.contact_name
-                                      ? { contact_code: only.code, contact_name: only.name, contact_tel: only.tel }
-                                      : {}),
-                                });
-                              }}
+                              items={customerItems}
+                              placeholder="検索ワード3文字"
+                              onSelect={(name) => applyCustomer(row, name)}
                               className="w-full h-11 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none"
-                              autoComplete="off"
                             />
                           </div>
                           {contactChooser(row, (patch) => handleUpdateField(row.id, patch))}
@@ -972,23 +1025,16 @@ export default function CraneProApp() {
                                 const hit = sites.find((site) => site.id === option.id);
                                 commitSite(row, hit?.name || option.value, hit);
                               }}
+                              onCreate={() => registerSite(row)}
                               className="w-full h-11 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none"
                             />
-                            {row.site_name && !sites.some((site) => site.name === row.site_name) && (
+                            {addressOf(row) && (
                               <button
                                 type="button"
-                                onClick={() =>
-                                  setSiteDraft({
-                                    rowId: row.id,
-                                    name: row.site_name,
-                                    customerCode: row.customer_code || '',
-                                    customerName: row.customer_name || '',
-                                    entryTime: row.entry_time || '',
-                                  })
-                                }
-                                className="shrink-0 h-11 px-2 text-[11px] font-extrabold text-teal-800 hover:bg-teal-50"
+                                onClick={() => openMap(addressOf(row))}
+                                className="shrink-0 h-11 px-2 text-[11px] font-extrabold text-slate-700 hover:bg-slate-100"
                               >
-                                登録
+                                地図
                               </button>
                             )}
                           </div>
@@ -996,15 +1042,11 @@ export default function CraneProApp() {
 
                         {/* 受付機種 */}
                         <td className="p-1 border-r border-slate-200">
-                          <input
-                            type="text"
-                            list="model-names"
-                            autoComplete="off"
+                          <NamePicker
                             value={row.requested_model || ''}
-                            placeholder="機種"
-                            onChange={(e) =>
-                              handleUpdateField(row.id, { requested_model: e.target.value })
-                            }
+                            items={modelItems}
+                            placeholder="検索ワード3文字"
+                            onSelect={(name) => handleUpdateField(row.id, { requested_model: name })}
                             className={`w-full h-9 px-2 rounded-lg border font-extrabold text-xs outline-none focus:ring-2 focus:ring-teal-600 ${badgeColor}`}
                           />
                         </td>
@@ -1115,6 +1157,13 @@ export default function CraneProApp() {
                     <div className="flex items-center gap-1">
                       <button
                         type="button"
+                        onClick={() => setAttachJobId(row.id)}
+                        className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-800 font-bold text-xs"
+                      >
+                        添付
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setEditingId(editingId === row.id ? null : row.id)}
                         className="px-3 py-1.5 rounded-xl bg-white text-slate-800 border border-slate-300 font-bold text-xs"
                       >
@@ -1170,46 +1219,22 @@ export default function CraneProApp() {
                           const hit = sites.find((site) => site.id === option.id);
                           commitSite(row, hit?.name || option.value, hit);
                         }}
+                        onCreate={() => registerSite(row)}
                         className={fieldClass}
                       />
+                      {addressOf(row) && (
+                        <button type="button" onClick={() => openMap(addressOf(row))} className="mt-1 text-xs font-extrabold text-slate-700 underline">
+                          地図を開く
+                        </button>
+                      )}
                     </label>
                     <label className="block">
                       <span className="text-[11px] font-extrabold text-slate-500">得意先</span>
-                      <input
-                        type="text"
-                        list="customer-names"
+                      <NamePicker
                         value={row.customer_name || ''}
-                        placeholder="得意先名"
-                        autoComplete="off"
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          const hit = customers.find((customer) => customer.name === val);
-                          if (!hit) {
-                            handleUpdateField(row.id, {
-                              customer_name: val,
-                              ...(val ? {} : { customer_code: '', contact_code: '', contact_name: '', contact_tel: '' }),
-                            });
-                            return;
-                          }
-                          const people = peopleFor(hit.code || '', hit.name || '');
-                          const only = people.length === 1 ? people[0] : null;
-                          const changed = (hit.code || '') !== (row.customer_code || '');
-                          handleUpdateField(row.id, {
-                            customer_name: val,
-                            customer_code: hit.code || '',
-                            ...(changed
-                              ? {
-                                  site_code: '',
-                                  site_name: '',
-                                  contact_code: only?.code || '',
-                                  contact_name: only?.name || '',
-                                  contact_tel: only?.tel || '',
-                                }
-                              : only && !row.contact_name
-                                ? { contact_code: only.code, contact_name: only.name, contact_tel: only.tel }
-                                : {}),
-                          });
-                        }}
+                        items={customerItems}
+                        placeholder="検索ワード3文字"
+                        onSelect={(name) => applyCustomer(row, name)}
                         className={fieldClass}
                       />
                     </label>
@@ -1241,28 +1266,12 @@ export default function CraneProApp() {
                       </label>
                       <label className="block">
                         <span className="text-[11px] font-extrabold text-slate-500">庸車</span>
-                        <input
-                          type="text"
-                          list="supplier-names"
-                          autoComplete="off"
-                          disabled={hasOp && !hasSup}
+                        <NamePicker
                           value={row.supplier_name || ''}
-                          placeholder={hasOp ? '自社オペ中' : '庸車先入力'}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            const hit = customers.find(
-                              (customer) =>
-                                customer.name === val && String(customer.partner_type || '').includes('仕入')
-                            );
-                            handleUpdateField(row.id, {
-                              supplier_name: val,
-                              ...(hit
-                                ? { supplier_code: hit.code || '', operator_name: '', operator_code: '' }
-                                : val
-                                  ? { operator_name: '', operator_code: '' }
-                                  : { supplier_code: '' }),
-                            });
-                          }}
+                          items={supplierItems}
+                          disabled={hasOp && !hasSup}
+                          placeholder={hasOp ? '自社オペ中' : '検索ワード3文字'}
+                          onSelect={(name) => applySupplier(row, name)}
                           className={fieldClass}
                         />
                       </label>
@@ -1292,13 +1301,11 @@ export default function CraneProApp() {
                     </div>
                     <label className="block">
                       <span className="text-[11px] font-extrabold text-slate-500">受付機種</span>
-                      <input
-                        type="text"
-                        list="model-names"
-                        autoComplete="off"
+                      <NamePicker
                         value={row.requested_model || ''}
-                        placeholder="機種"
-                        onChange={(e) => handleUpdateField(row.id, { requested_model: e.target.value })}
+                        items={modelItems}
+                        placeholder="検索ワード3文字"
+                        onSelect={(name) => handleUpdateField(row.id, { requested_model: name })}
                         className={fieldClass}
                       />
                     </label>
@@ -1699,6 +1706,7 @@ export default function CraneProApp() {
                           selectedJob.site_name || ''
                         )}
                         onChange={(val) => setSelectedJob({ ...selectedJob, site_name: val })}
+                        onCreate={() => registerSite(selectedJob)}
                         onPick={(option) => {
                           const hit = sites.find((site) => site.id === option.id);
                           setSelectedJob({
@@ -1878,6 +1886,9 @@ export default function CraneProApp() {
         }))}
         onClose={() => setPrintRequest(null)}
       />
+    )}
+    {attachJobId && companyId && (
+      <AttachDialog companyId={companyId} dispatchId={attachJobId} onClose={() => setAttachJobId(null)} />
     )}
     </>
   );
