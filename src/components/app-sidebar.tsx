@@ -1,6 +1,6 @@
-import { Bell, Building2, Calendar, FileText, Receipt } from 'lucide-react';
+import { Bell, Building2, Calendar, FileText, MapPin, Receipt } from 'lucide-react';
 
-type NavKey = 'board' | 'billing' | 'masters' | 'alerts' | 'import';
+type NavKey = 'board' | 'billing' | 'masters' | 'alerts' | 'import' | 'find';
 
 const itemClass =
   'flex items-center gap-2 md:gap-3 px-3 py-2 md:py-2.5 rounded-xl font-medium text-sm transition whitespace-nowrap md:w-full';
@@ -25,6 +25,13 @@ export default function AppSidebar({ active }: { active: NavKey }) {
         >
           <Calendar className="w-4 h-4" />
           配車ボード
+        </a>
+        <a
+          href="/find-crane"
+          className={`${itemClass} ${active === 'find' ? 'bg-teal-600/20 text-teal-300 font-bold' : 'text-slate-300 hover:bg-slate-800/70'}`}
+        >
+          <MapPin className="w-4 h-4" />
+          クレーンを探す
         </a>
         <a
           href="/billing"

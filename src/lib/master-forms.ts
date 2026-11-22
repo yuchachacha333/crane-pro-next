@@ -89,6 +89,8 @@ export const MASTER_FORMS: MasterDefinition[] = [
           zip('postal_code', '郵便番号', 'address1'),
           addressOf('address1', '住所', 'postal_code'),
           text('address2', '住所下段'),
+          number('latitude', '緯度'),
+          number('longitude', '経度'),
           text('tel', '電話番号'),
           text('tel2', '電話番号2'),
           text('fax', 'FAX'),
@@ -181,7 +183,13 @@ export const MASTER_FORMS: MasterDefinition[] = [
       },
       {
         name: '現場の場所',
-        fields: [zip('postal_code', '郵便番号', 'address'), addressOf('address', '住所', 'postal_code'), text('tel', '電話番号')],
+        fields: [
+          zip('postal_code', '郵便番号', 'address'),
+          addressOf('address', '住所', 'postal_code'),
+          number('latitude', '緯度'),
+          number('longitude', '経度'),
+          text('tel', '電話番号'),
+        ],
       },
       {
         name: '事務所',

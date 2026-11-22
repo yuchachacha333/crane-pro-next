@@ -5,6 +5,7 @@ import { Plus, Save, Search, Trash2 } from 'lucide-react';
 import AppSidebar from '@/components/app-sidebar';
 import { getDefaultCompanyId, supabase } from '@/lib/supabase';
 import { lookupPostal } from '@/lib/address-lookup';
+import { geocodeAddress } from '@/lib/geo';
 import { nextMasterCode } from '@/lib/next-code';
 import { MASTER_FORMS, fieldsOf, type MasterDefinition, type MasterField, type MasterTable } from '@/lib/master-forms';
 
@@ -220,18 +221,42 @@ export default function MastersClient() {
       }
     }
     payload.code = code;
+    const address =
+      table === 'customers'
+        ? [payload.address1, payload.address2].filter((part) => typeof part === 'string' && part).join(' ')
+        : table === 'sites' && typeof payload.address === 'string'
+          ? payload.address
+          : '';
+    if (address.trim().length >= 2) {
+      const point = await geocodeAddress(address);
+      if (point) {
+        payload.latitude = point.lat;
+        payload.longitude = point.lng;
+      }
+    }
     setSaving(true);
     setError('');
-    const request =
+    const write = (body: Record<string, string | number | boolean | null>) =>
       selectedId === 'new'
-        ? supabase.from(table).insert(payload).select('*').single()
-        : supabase.from(table).update(payload).eq('id', selectedId).select('*').single();
-    const { data, error: saveError } = await request;
+        ? supabase.from(table).insert(body).select('*').single()
+        : supabase.from(table).update(body).eq('id', selectedId).select('*').single();
+    let result = await write(payload);
+    if (result.error && /latitude|longitude/.test(result.error.message)) {
+      const rest = { ...payload };
+      delete rest.latitude;
+      delete rest.longitude;
+      result = await write(rest);
+    }
+    const { data, error: saveError } = result;
     setSaving(false);
     if (saveError) {
-      setError(saveError.message.includes('duplicate') || saveError.message.includes('unique')
-        ? '同じコードがすでにあります'
-        : saveError.message);
+      setError(
+        saveError.message.includes('duplicate') || saveError.message.includes('unique')
+          ? '同じコードがすでにあります'
+          : /latitude|longitude/.test(saveError.message)
+            ? '緯度・経度の列がまだありません。SupabaseのSQLエディタで supabase/customer_coordinates.sql を実行してください'
+            : saveError.message
+      );
       return;
     }
     const saved = data as Row;
