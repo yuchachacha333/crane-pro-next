@@ -67,6 +67,7 @@ interface DispatchRecord {
   contact_code: string;
   contact_name: string;
   contact_tel: string;
+  purchase_amount?: number | null;
   supplier_contact_code?: string;
   supplier_contact_name?: string;
   supplier_contact_tel?: string;
@@ -98,6 +99,14 @@ type ContactPerson = {
 
 function isUnassigned(row: Pick<DispatchRecord, 'operator_name' | 'supplier_name' | 'is_cancelled'>) {
   return !row.is_cancelled && !row.operator_name?.trim() && !row.supplier_name?.trim();
+}
+
+// 付帯（残業・鉄板・高速代・回送・費用など）にあたる商品マスタ。機械・車両は含めない。
+const EXTRA_CATEGORIES = ['付帯', '費用', '回送', '書類', '誘導車', '作業員'];
+function isExtraProduct(row: Record<string, any>) {
+  const c1 = String(row.category1 || '');
+  if (EXTRA_CATEGORIES.includes(c1)) return true;
+  return c1 === 'その他' && !String(row.category2 || '') && String(row.product_type || '') === 'クレーン';
 }
 
 async function fetchCompanyRows(table: string, companyId: string, orderColumn: string) {
@@ -140,6 +149,7 @@ export default function CraneProApp() {
   const [sites, setSites] = useState<any[]>([]);
   const [operators, setOperators] = useState<any[]>([]);
   const [models, setModels] = useState<any[]>([]);
+  const [extraProducts, setExtraProducts] = useState<any[]>([]);
   const [monthCounts, setMonthCounts] = useState<Record<string, number>>({});
   const [openDays, setOpenDays] = useState<Record<string, boolean>>({});
   const [printRequest, setPrintRequest] = useState<{ kind: PrintKind; jobId: string } | null>(null);
@@ -160,7 +170,8 @@ export default function CraneProApp() {
   // 今日の日付は描画後に決める。初期描画で new Date() すると Next.js が事前レンダリングを止める。
   // 請求明細の「訂正処理」から来た場合は、その日付の配車を開き、詳細（売上詳細・付帯明細）を自動で開く
   const [pendingJob, setPendingJob] = useState<{ id: string; tab: 'sales' | 'hire' | 'operator' } | null>(null);
-  const [fromBilling, setFromBilling] = useState(false);
+  const [backUrl, setBackUrl] = useState('');
+  const fromBilling = Boolean(backUrl);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const date = params.get('date') || '';
@@ -169,7 +180,8 @@ export default function CraneProApp() {
       const tab = params.get('tab');
       setBoardDate(date);
       setPendingJob({ id: job, tab: tab === 'hire' || tab === 'operator' ? tab : 'sales' });
-      setFromBilling(params.get('from') === 'billing');
+      const back = params.get('back') || '';
+      setBackUrl(back.startsWith('/billing') ? back : '');
       return;
     }
     setBoardDate(getTodayIso());
@@ -193,6 +205,12 @@ export default function CraneProApp() {
         setSites(siteRows);
         setOperators(opRows);
         setModels(modRows);
+        try {
+          const productRows = await fetchCompanyRows('products', cid, 'code');
+          setExtraProducts(productRows.filter(isExtraProduct));
+        } catch {
+          setExtraProducts([]);
+        }
 
         const contactRes = await supabase
           .from('customer_contacts')
@@ -395,6 +413,14 @@ export default function CraneProApp() {
     setExtras(loaded);
   };
 
+  // 請求明細から来た場合は、詳細を閉じたら（保存後も）請求の得意先ページへ戻る
+  const openedForFix = React.useRef(false);
+  useEffect(() => {
+    if (!backUrl) return;
+    if (selectedJob) openedForFix.current = true;
+    else if (openedForFix.current) window.location.assign(backUrl);
+  }, [selectedJob, backUrl]);
+
   useEffect(() => {
     if (!pendingJob || loading) return;
     const target = dispatches.find((row) => row.id === pendingJob.id);
@@ -404,6 +430,48 @@ export default function CraneProApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingJob, loading, dispatches]);
 
+  // 付帯の候補：商品マスタ（機種マスタ）の中の費用・作業員・鉄板など ＋ 商品テーブルの付帯項目
+  const extraItems = (() => {
+    const seen = new Set<string>();
+    const out: { id: string; name: string; kana: string; searchWord: string; first: boolean }[] = [];
+    const likeExtra = /費|料|員|鉄板|誘導|書類|オペレータ|ハウス|その他|高速|回送|待機|ガード|残業|時間外|工具/;
+    const push = (id: string, name: string, kana: string, unit: string) => {
+      if (!name || seen.has(name)) return;
+      seen.add(name);
+      out.push({ id, name, kana, searchWord: unit ? `単位: ${unit}` : '', first: likeExtra.test(name) });
+    };
+    for (const p of extraProducts) push('p' + (p.id || p.code), String(p.name), String(p.kana || ''), p.unit_name && p.unit_name !== 'h' ? String(p.unit_name) : '');
+    for (const m of models) push('m' + (m.id || m.code), String(m.name), String(m.kana || ''), '');
+    return [...out.filter((x) => x.first), ...out.filter((x) => !x.first)];
+  })();
+
+  // 付帯の項目をマスタ（商品）に新規登録
+  const registerExtra = async (index: number) => {
+    if (!companyId) return;
+    const name = (window.prompt('登録する付帯の名前（例: 残業代、鉄板、高速代）') || '').trim();
+    if (!name) return;
+    if (extraItems.some((p) => p.name === name)) {
+      showToast('同じ名前がすでにあります。一覧から選んでください');
+      return;
+    }
+    const maxCode = models.reduce((max, m) => Math.max(max, Number(m.code) || 0), 0);
+    const { data, error } = await supabase
+      .from('machine_models')
+      .insert({ company_id: companyId, code: String(maxCode + 1), name, sort_order: 995 })
+      .select('*')
+      .single();
+    if (error || !data) {
+      showToast('マスタ登録エラー: ' + (error?.message || ''));
+      return;
+    }
+    setModels((prev) => [...prev, data]);
+    setExtras((prev) => {
+      const next = [...prev];
+      if (next[index]) next[index] = { ...next[index], item_name: name };
+      return next;
+    });
+    showToast(`「${name}」をマスタに登録しました`);
+  };
   // 詳細モーダルの保存
   const saveJobModal = async () => {
     if (!selectedJob || !companyId) return;
@@ -454,6 +522,19 @@ export default function CraneProApp() {
       }
     }
 
+    let purchaseError = '';
+    if (!error && selectedJob.supplier_name) {
+      const purchaseSave = await supabase
+        .from('dispatches')
+        .update({ purchase_amount: selectedJob.purchase_amount ?? null })
+        .eq('id', selectedJob.id);
+      if (purchaseSave.error && /purchase_amount/i.test(purchaseSave.error.message)) {
+        if (selectedJob.purchase_amount != null) purchaseError = '仕入金額を保存するには、Supabaseで supabase/dispatch_purchase.sql を実行してください';
+      } else if (purchaseSave.error) {
+        purchaseError = purchaseSave.error.message;
+      }
+    }
+
     // 付帯売上明細の入れ替え保存
     await supabase.from('dispatch_extras').delete().eq('dispatch_id', selectedJob.id);
     if (validExtras.length > 0) {
@@ -475,6 +556,9 @@ export default function CraneProApp() {
     setSavingJob(false);
     if (error) {
       showToast('保存エラー: ' + error.message);
+    } else if (purchaseError) {
+      showToast(purchaseError);
+      fetchDispatches();
     } else if (supplierContactError) {
       showToast(supplierContactError);
       fetchDispatches();
@@ -1607,7 +1691,7 @@ export default function CraneProApp() {
       {selectedJob && fromBilling && (
         <button
           type="button"
-          onClick={() => window.history.back()}
+          onClick={() => window.location.assign(backUrl)}
           className="fixed left-2 top-2 z-[200] h-10 rounded-xl bg-teal-700 px-3 text-sm font-black text-white shadow-xl"
         >
           ← 請求明細へ戻る
@@ -1799,17 +1883,24 @@ export default function CraneProApp() {
                     <div className="space-y-2">
                       {extras.map((line, i) => (
                         <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                          <input
-                            type="text"
-                            placeholder="項目名（例: 残業代）"
-                            value={line.item_name}
-                            onChange={(e) => {
-                              const next = [...extras];
-                              next[i].item_name = e.target.value;
-                              setExtras(next);
-                            }}
-                            className="col-span-4 h-10 px-2.5 rounded-lg border border-slate-300 text-sm font-bold"
-                          />
+                          <div className="col-span-4 min-w-0">
+                            <NamePicker
+                              freeText
+                              value={line.item_name}
+                              items={extraItems}
+                              title="付帯の項目を選ぶ"
+                              placeholder="項目名（選ぶか入力）"
+                              onSelect={(name) => {
+                                const next = [...extras];
+                                next[i] = { ...next[i], item_name: name };
+                                const hit = extraProducts.find((p) => p.name === name);
+                                if (hit?.unit_name && hit.unit_name !== 'h') next[i].unit = String(hit.unit_name);
+                                setExtras(next);
+                              }}
+                              onCreate={() => registerExtra(i)}
+                              className="h-10 w-full px-2.5 rounded-lg border border-slate-300 text-sm font-bold"
+                            />
+                          </div>
                           <input
                             type="number"
                             placeholder="数量"
@@ -1999,6 +2090,21 @@ export default function CraneProApp() {
                         className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold"
                       />
                     </div>
+                    {selectedJob.supplier_name && (
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 mb-1">仕入金額（庸車先への支払・税抜）</label>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          placeholder="例: 40000"
+                          value={selectedJob.purchase_amount ?? ''}
+                          onChange={(e) =>
+                            setSelectedJob({ ...selectedJob, purchase_amount: e.target.value === '' ? null : Number(e.target.value) })
+                          }
+                          className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold"
+                        />
+                      </div>
+                    )}
                     <div>
                       <label className="block text-xs font-bold text-slate-600 mb-1">現場担当者</label>
                       {contactChooser(

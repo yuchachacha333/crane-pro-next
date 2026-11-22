@@ -39,6 +39,7 @@ export default function NamePicker({
   freeText,
   title,
   onSelect,
+  onCreate,
 }: {
   value: string;
   items: NameItem[];
@@ -48,6 +49,7 @@ export default function NamePicker({
   freeText?: boolean;
   title?: string;
   onSelect: (name: string) => void;
+  onCreate?: () => void;
 }) {
   const touch = useTouchPad();
   const box = useRef<HTMLDivElement>(null);
@@ -127,6 +129,7 @@ export default function NamePicker({
             current={value}
             onPick={(id) => choose(nameById.get(id) || '')}
             onFreeText={freeText ? (text) => choose(text) : undefined}
+            onCreate={onCreate ? () => { setSheet(false); onCreate(); } : undefined}
             onClose={() => setSheet(false)}
           />
         )}
@@ -198,6 +201,20 @@ export default function NamePicker({
                 {item.searchWord ? <span className="block text-[11px] font-medium text-slate-500">{item.searchWord}</span> : null}
               </button>
             ))}
+            {onCreate && (
+              <button
+                type="button"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  setOpen(false);
+                  setShowAll(false);
+                  onCreate();
+                }}
+                className="sticky bottom-0 block w-full border-t border-slate-200 bg-white px-3 py-2 text-left text-sm font-extrabold text-teal-800 hover:bg-teal-50"
+              >
+                ＋ 新規登録（マスタに追加）
+              </button>
+            )}
             {list.length === 0 && (
               <p className="px-3 py-3 text-xs font-bold text-slate-400">
                 {filterText.trim() ? '該当がありません' : '文字を入力してください'}

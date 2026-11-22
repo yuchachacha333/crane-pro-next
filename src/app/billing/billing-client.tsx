@@ -80,8 +80,15 @@ export default function BillingClient() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // 訂正処理から戻ってきた時は、同じ基準日・締め・得意先ページを開く
   useEffect(() => {
-    setAnchor(getTodayIso());
+    const params = new URLSearchParams(window.location.search);
+    const a = params.get('anchor') || '';
+    setAnchor(/^\d{4}-\d{2}-\d{2}$/.test(a) ? a : getTodayIso());
+    const c = params.get('close') || '';
+    if (c) setClose(c);
+    const code = params.get('code');
+    if (code != null && params.has('code')) setDetail({ code, mode: params.get('mode') === 'site' ? 'site' : 'flat' });
   }, []);
 
   useEffect(() => {
@@ -250,25 +257,40 @@ export default function BillingClient() {
 
   function openInvoice(group: Group) {
     const party = customers.find((customer) => customer.code === group.code);
-    const lines: InvoiceLine[] = group.jobs.map((job) => {
+    const lines: InvoiceLine[] = group.jobs.flatMap((job) => {
       const parts = String(job.work_date || '').match(/^\d{4}-(\d{2})-(\d{2})/);
-      const shown = parts ? `${Number(parts[1])}/${Number(parts[2])}` : job.work_date;
-      const note = [job.notes || '', job.missing ? '単価未入力' : ''].filter(Boolean).join(' ');
-      return {
+      const shown = parts ? `/` : job.work_date;
+      const site = job.site_name || '現場未入力';
+      const unpriced = job.base == null;
+      const main: InvoiceLine = {
         date: shown,
         machine: job.requested_model || '',
-        site: job.site_name || '現場未入力',
+        site,
         no: '',
         detail: '',
-        qty: job.missing ? '' : 1,
-        price: job.missing ? '' : job.amount,
-        amount: job.missing ? '' : job.amount,
-        note,
+        qty: unpriced ? '' : 1,
+        price: unpriced ? '' : job.base ?? '',
+        amount: unpriced ? '' : job.base ?? '',
+        note: [job.notes || '', unpriced ? '単価未入力' : ''].filter(Boolean).join(' '),
         start: shown,
         end: shown,
       };
-    });
-    setInvoice({
+      // 付帯は合算せず、1項目ずつ別の行にする
+      const extraRows: InvoiceLine[] = job.extraLines.map((line) => ({
+        date: shown,
+        machine: line.name,
+        site,
+        no: '',
+        detail: '',
+        qty: line.quantity,
+        price: line.unit_price,
+        amount: line.amount,
+        note: line.unit ? `単位: ${line.unit}` : '',
+        start: shown,
+        end: shown,
+      }));
+      return [main, ...extraRows];
+    });    setInvoice({
       name: group.name,
       postal: party?.postal_code || '',
       address: [party?.address1, party?.address2].filter(Boolean).join(' '),
@@ -279,7 +301,8 @@ export default function BillingClient() {
   // 請求明細の1件分（本体の行＋付帯売上の行）
   function jobRows(job: BillJob) {
     const hours = job.work_hours == null ? '—' : `${job.work_hours}`;
-    const fix = `/?job=${encodeURIComponent(job.id)}&date=${job.work_date}&tab=sales&from=billing`;
+    const back = `/billing?anchor=${anchor}&close=${close}&code=${encodeURIComponent(detail?.code ?? '')}&mode=${detail?.mode ?? 'flat'}`;
+    const fix = `/?job=${encodeURIComponent(job.id)}&date=${job.work_date}&tab=sales&back=${encodeURIComponent(back)}`;
     return [
       <tr key={job.id} className="border-t border-slate-200 align-middle">
         <td className="px-3 py-3 whitespace-nowrap font-black">{formatJapaneseMonthDay(job.work_date)}</td>
@@ -290,7 +313,7 @@ export default function BillingClient() {
         <td className="px-3 py-3 text-right font-bold">{hours}</td>
         <td className="px-3 py-3 text-right whitespace-nowrap font-bold">{job.base == null ? '未入力' : money(job.base)}</td>
         <td className="px-3 py-3 font-bold">{job.site_name || '現場未入力'}</td>
-        <td className="px-3 py-3 text-right whitespace-nowrap font-black">{job.missing ? '単価未入力' : money(job.amount)}</td>
+        <td className="px-3 py-3 text-right whitespace-nowrap font-black">{job.base == null ? '単価未入力' : money(job.base)}</td>
         <td className="sticky right-0 bg-white px-2 py-2 text-center shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.25)]">
           <a
             href={fix}
@@ -312,15 +335,15 @@ export default function BillingClient() {
           <td className="px-3 py-1.5 font-bold">{line.unit}</td>
           <td className="px-3 py-1.5" />
           <td className="px-3 py-1.5 text-right whitespace-nowrap font-bold">{money(line.unit_price)}</td>
-          <td className="px-3 py-1.5 text-xs font-bold text-amber-800">上の行の金額に含む</td>
-          <td className="px-3 py-1.5 text-right whitespace-nowrap font-bold">（{money(line.amount)}）</td>
+          <td className="px-3 py-1.5" />
+          <td className="px-3 py-1.5 text-right whitespace-nowrap font-bold">{money(line.amount)}</td>
           <td className="sticky right-0 bg-amber-50 px-2" />
         </tr>
       )),
     ];
   }
 
-  const detailHead = ['作業日', '商品名', '時間帯（開始〜終了）', '数量', '単位', '時間', '売上単価', '現場名', '金額（付帯込）', '訂正'];
+  const detailHead = ['作業日', '商品名', '時間帯（開始〜終了）', '数量', '単位', '時間', '売上単価', '現場名', '金額', '訂正'];
 
   return (
     <div className={`min-h-screen bg-slate-100 text-slate-900 flex flex-col md:flex-row ${invoice ? 'print:hidden' : ''}`}>
