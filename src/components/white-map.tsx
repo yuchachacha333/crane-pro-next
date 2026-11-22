@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { downloadMapPdf, downloadMapWord, FRAME_H_MM, FRAME_W_MM } from '@/lib/map-word';
+import { downloadMapImage, downloadMapWord, FRAME_H_MM, FRAME_W_MM } from '@/lib/map-word';
 
 type Props = {
   address: string;
@@ -31,6 +31,8 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
   const [place, setPlace] = useState('');
   const [status, setStatus] = useState('住所を探しています');
   const [saving, setSaving] = useState(false);
+  const [phone, setPhone] = useState(false);
+  const [layoutReady, setLayoutReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,8 +64,19 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
   }, [address]);
 
   useEffect(() => {
+    const media = window.matchMedia('(pointer: coarse), (max-width: 1023px)');
+    const apply = () => {
+      setPhone(media.matches);
+      setLayoutReady(true);
+    };
+    apply();
+    media.addEventListener('change', apply);
+    return () => media.removeEventListener('change', apply);
+  }, []);
+
+  useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || phone) return;
     const fit = () => {
       const ratio = FRAME_W_MM / FRAME_H_MM;
       const bounds = map.getBoundingClientRect();
@@ -79,10 +92,10 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
     const observer = new ResizeObserver(fit);
     observer.observe(map);
     return () => observer.disconnect();
-  }, []);
+  }, [phone]);
 
   async function saveMap() {
-    const sheet = frameRef.current;
+    const sheet = phone ? mapRef.current : frameRef.current;
     if (!sheet || !src || saving) return;
     setSaving(true);
     setStatus('表示された画面で、このタブを選んでください');
@@ -126,14 +139,14 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
       if (!blob) throw new Error('empty');
       const site = siteName.replace(/[\\/:*?"<>|\r\n]/g, ' ').replace(/\s+/g, ' ').trim() || '現場';
       const fileBase = `${date || '日付なし'}_${site}`;
-      if (isPhone()) await downloadMapPdf(blob, fileBase);
+      if (phone) await downloadMapImage(blob, fileBase);
       else await downloadMapWord(blob, fileBase);
       setStatus(place || address);
     } catch (error) {
       const name = error instanceof DOMException ? error.name : '';
       if (name === 'NotAllowedError' || name === 'AbortError') setStatus(place || address);
       else if (name === 'NotSupportedError') setStatus('Chrome または Edge で開くと出力できます');
-      else if (name !== 'AbortError') setStatus(isPhone() ? 'PDFに出力できませんでした' : 'ワードに出力できませんでした');
+      else if (name !== 'AbortError') setStatus(phone ? '画像に出力できませんでした' : 'ワードに出力できませんでした');
     } finally {
       stream?.getTracks().forEach((track) => track.stop());
       bitmap?.close();
@@ -148,7 +161,7 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
           <div className="min-w-0">
             <h2 className="text-lg font-extrabold">モノトーン地図</h2>
             <p className="text-xs font-bold text-slate-500 truncate">
-              {status === place ? '枠の中が、比率を変えずにA4横へ入ります' : status}
+              {status === place ? (phone ? '画面の地図を画像にします' : '枠の中が、比率を変えずにA4横へ入ります') : status}
             </p>
           </div>
           <div className="flex gap-2 shrink-0">
@@ -158,7 +171,7 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
               disabled={!src || saving}
               className="h-10 px-3 rounded-xl bg-slate-900 text-white font-bold disabled:opacity-40"
             >
-              {isPhone() ? 'PDFに出力' : 'ワードに出力'}
+              {phone ? '画像に出力' : 'ワードに出力'}
             </button>
             <button type="button" onClick={onClose} className="h-10 px-3 rounded-xl border border-slate-300 font-bold">
               閉じる
@@ -175,26 +188,24 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
                 className="absolute top-0 -left-[260px] h-full w-[calc(100%+260px)] max-[1023px]:left-0 max-[1023px]:top-[-150px] max-[1023px]:h-[calc(100%+150px)] max-[1023px]:w-full"
               />
             ) : null}
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div
-                ref={frameRef}
-                style={{
-                  width: frame.width,
-                  height: frame.height,
-                  outline: '3px solid #0f172a',
-                  boxShadow: '0 0 0 9999px rgba(15, 23, 42, 0.45)',
-                }}
-              />
-            </div>
+            {layoutReady && !phone ? (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <div
+                  ref={frameRef}
+                  style={{
+                    width: frame.width,
+                    height: frame.height,
+                    outline: '3px solid #0f172a',
+                    boxShadow: '0 0 0 9999px rgba(15, 23, 42, 0.45)',
+                  }}
+                />
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
     </div>
   );
-}
-
-function isPhone() {
-  return window.matchMedia('(pointer: coarse), (max-width: 1023px)').matches;
 }
 
 function cropMap(bitmap: ImageBitmap, sheet: HTMLElement) {

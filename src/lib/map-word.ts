@@ -66,6 +66,15 @@ export async function downloadMapWord(png: Blob, fileBase: string) {
   saveBlob(await Packer.toBlob(doc), `${fileBase}.docx`);
 }
 
+export async function downloadMapImage(png: Blob, fileBase: string) {
+  const file = new File([png], `${fileBase}.png`, { type: 'image/png' });
+  if (navigator.canShare?.({ files: [file] })) {
+    await navigator.share({ files: [file], title: fileBase });
+    return;
+  }
+  saveBlob(png, file.name);
+}
+
 export async function downloadMapPdf(png: Blob, fileBase: string) {
   const { jsPDF } = await import('jspdf');
   const pdf = new jsPDF({ orientation: 'l', unit: 'mm', format: 'a4' });

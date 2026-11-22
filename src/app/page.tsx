@@ -26,6 +26,7 @@ import SuggestInput, { type SuggestOption } from '@/components/suggest-input';
 import NamePicker from '@/components/name-picker';
 import AttachDialog from '@/components/attach-dialog';
 import WhiteMapDialog from '@/components/white-map';
+import NearbyPartners, { type NearbyPartner } from '@/components/nearby-partners';
 import { supabase, getDefaultCompanyId } from '@/lib/supabase';
 import { sameCode, sameParty, partyKey } from '@/lib/party-name';
 import { toHalfwidthTime } from '@/lib/time-text';
@@ -149,6 +150,7 @@ export default function CraneProApp() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [attachJobId, setAttachJobId] = useState<string | null>(null);
   const [mapTarget, setMapTarget] = useState<{ address: string; date: string; siteName: string } | null>(null);
+  const [nearbyTarget, setNearbyTarget] = useState<{ address: string; siteName: string } | null>(null);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -544,6 +546,29 @@ export default function CraneProApp() {
     if (!address) return;
     setMapTarget({ address, date: row.work_date, siteName: row.site_name || '現場' });
   };
+  const openNearby = (row: DispatchRecord) => {
+    const address = addressOf(row);
+    if (!address) return;
+    setNearbyTarget({ address, siteName: row.site_name || '現場' });
+  };
+  const nearbyPartners = useMemo<NearbyPartner[]>(
+    () =>
+      customers
+        .filter((customer) => customer.name && String(customer.partner_type || '').includes('仕入'))
+        .map((customer) => {
+          const lat = customer.latitude == null || customer.latitude === '' ? null : Number(customer.latitude);
+          const lng = customer.longitude == null || customer.longitude === '' ? null : Number(customer.longitude);
+          return {
+            id: String(customer.id || customer.code),
+            name: String(customer.name),
+            tel: String(customer.tel || ''),
+            address: [customer.address1, customer.address2].filter(Boolean).join(' '),
+            lat: lat != null && Number.isFinite(lat) ? lat : null,
+            lng: lng != null && Number.isFinite(lng) ? lng : null,
+          };
+        }),
+    [customers]
+  );
   const isOwnOperator = (name: string) =>
     operators.some((op) => String(op.name || '').trim() && String(op.name).trim() === String(name || '').trim());
   const registerSite = (row: DispatchRecord) => {
@@ -1051,12 +1076,6 @@ export default function CraneProApp() {
                             onSelect={(name) => applySupplier(row, name)}
                             className="w-full h-11 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none disabled:bg-slate-100 disabled:text-slate-400"
                           />
-                          {contactChooser(
-                            row,
-                            (patch) => handleUpdateField(row.id, patch),
-                            'w-full h-8 px-2 text-xs font-bold bg-amber-50 outline-none',
-                            'supplier'
-                          )}
                         </td>
 
                         {/* 得意先 */}
@@ -1096,13 +1115,22 @@ export default function CraneProApp() {
                               className="w-full h-11 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none"
                             />
                             {addressOf(row) && (
-                              <button
-                                type="button"
-                                onClick={() => openMap(row)}
-                                className="shrink-0 h-11 px-2 text-[11px] font-extrabold text-slate-700 hover:bg-slate-100"
-                              >
-                                地図
-                              </button>
+                              <div className="shrink-0 flex flex-col border-l border-slate-200">
+                                <button
+                                  type="button"
+                                  onClick={() => openMap(row)}
+                                  className="h-6 px-2 text-[11px] font-extrabold text-slate-700 hover:bg-slate-100"
+                                >
+                                  地図
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => openNearby(row)}
+                                  className="h-6 px-2 text-[11px] font-extrabold text-teal-800 hover:bg-teal-50"
+                                >
+                                  探す
+                                </button>
+                              </div>
                             )}
                           </div>
                         </td>
@@ -1300,11 +1328,6 @@ export default function CraneProApp() {
                         onCreate={() => registerSite(row)}
                         className={fieldClass}
                       />
-                      {addressOf(row) && (
-                        <button type="button" onClick={() => openMap(row)} className="mt-1 text-xs font-extrabold text-slate-700 underline">
-                          地図を開く
-                        </button>
-                      )}
                     </label>
                     <label className="block">
                       <span className="text-[11px] font-extrabold text-slate-500">得意先</span>
@@ -1365,7 +1388,6 @@ export default function CraneProApp() {
                           onSelect={(name) => applySupplier(row, name)}
                           className={fieldClass}
                         />
-                        {contactChooser(row, (patch) => handleUpdateField(row.id, patch), fieldClass, 'supplier')}
                       </label>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
@@ -1423,6 +1445,25 @@ export default function CraneProApp() {
                       この配車を取り消す
                     </label>
                   </div>
+                  )}
+
+                  {siteAddress && (
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openMap(row)}
+                        className="h-11 w-full rounded-xl border border-slate-300 bg-white font-extrabold"
+                      >
+                        地図
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openNearby(row)}
+                        className="h-11 w-full rounded-xl bg-slate-900 text-white font-extrabold"
+                      >
+                        探す
+                      </button>
+                    </div>
                   )}
 
                   <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-end text-sm">
@@ -1855,13 +1896,22 @@ export default function CraneProApp() {
                           className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold"
                         />
                         {addressOf(selectedJob) && (
-                          <button
-                            type="button"
-                            onClick={() => openMap(selectedJob)}
-                            className="shrink-0 h-11 px-3 rounded-xl border border-slate-300 text-sm font-extrabold"
-                          >
-                            地図
-                          </button>
+                          <div className="shrink-0 flex flex-col gap-1">
+                            <button
+                              type="button"
+                              onClick={() => openMap(selectedJob)}
+                              className="h-11 px-3 rounded-xl border border-slate-300 text-sm font-extrabold"
+                            >
+                              地図
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openNearby(selectedJob)}
+                              className="h-11 px-3 rounded-xl bg-slate-900 text-white text-sm font-extrabold"
+                            >
+                              探す
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -1887,19 +1937,6 @@ export default function CraneProApp() {
                         }}
                         className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold"
                       />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-600 mb-1">庸車の担当者</label>
-                      {contactChooser(
-                        selectedJob,
-                        (patch) => setSelectedJob({ ...selectedJob, ...patch }),
-                        'w-full h-11 px-3 rounded-xl border border-slate-300 font-bold bg-white',
-                        'supplier'
-                      ) || (
-                        <p className="h-11 px-3 rounded-xl bg-slate-100 flex items-center text-sm font-bold text-slate-500">
-                          先に庸車を選んでください
-                        </p>
-                      )}
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-slate-600 mb-1">現場担当者</label>
@@ -2045,6 +2082,14 @@ export default function CraneProApp() {
         date={mapTarget.date}
         siteName={mapTarget.siteName}
         onClose={() => setMapTarget(null)}
+      />
+    )}
+    {nearbyTarget && (
+      <NearbyPartners
+        address={nearbyTarget.address}
+        siteName={nearbyTarget.siteName}
+        partners={nearbyPartners}
+        onClose={() => setNearbyTarget(null)}
       />
     )}
     </>
