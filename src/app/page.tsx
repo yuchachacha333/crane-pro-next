@@ -940,10 +940,10 @@ export default function CraneProApp() {
               担当者マスタをまだ読めません。Supabase の SQL エディタで supabase/enable_master_access.sql を実行すると、得意先の担当者と携帯番号が出ます。
             </p>
           )}
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-2 md:flex-nowrap md:gap-4">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-2 xl:flex-nowrap xl:gap-4">
             <h1 className="order-1 shrink-0 text-xl md:text-3xl font-extrabold text-slate-900 tracking-tight">配車管理</h1>
 
-            <div className="order-2 ml-auto flex items-center gap-1.5 md:order-3 md:gap-2 md:shrink-0">
+            <div className="order-2 ml-auto flex shrink-0 items-center gap-1.5 xl:order-3 xl:gap-2">
               {copiedRow && (
                 <button
                   onClick={handlePasteRow}
@@ -951,7 +951,7 @@ export default function CraneProApp() {
                   className="inline-flex h-9 items-center gap-1.5 px-2.5 md:h-11 md:px-3.5 rounded-xl bg-amber-100 text-amber-900 border border-amber-300 font-bold text-sm hover:bg-amber-200 transition"
                 >
                   <ClipboardPaste className="w-4 h-4" />
-                  <span className="hidden md:inline">コピー行を貼り付け</span>
+                  <span className="hidden xl:inline">コピー行を貼り付け</span>
                 </button>
               )}
               <button
@@ -960,7 +960,7 @@ export default function CraneProApp() {
                 className="inline-flex h-9 items-center gap-1.5 px-3 md:h-11 md:px-4 rounded-xl bg-[#121826] text-white font-bold text-sm shadow-sm hover:bg-slate-800 transition"
               >
                 <Plus className="w-4 h-4" />
-                <span className="hidden md:inline">新規配車行追加</span>
+                <span className="hidden xl:inline">新規配車行追加</span>
               </button>
               <button
                 onClick={() => openPrint('board')}
@@ -968,12 +968,12 @@ export default function CraneProApp() {
                 className="inline-flex h-9 items-center gap-1.5 px-2.5 md:h-11 md:px-3.5 rounded-xl bg-white text-slate-700 border border-slate-300 font-bold text-sm hover:bg-slate-50 transition"
               >
                 <Printer className="w-4 h-4" />
-                <span className="hidden sm:inline">配車表</span>
+                <span className="hidden xl:inline">配車表</span>
               </button>
             </div>
 
             {/* 日付・曜日・六曜（タップでカレンダー） */}
-            <div className="order-3 flex w-full items-center justify-center gap-1.5 md:order-2 md:w-auto md:flex-1 md:gap-2">
+            <div className="order-3 flex w-full items-center justify-center gap-1.5 xl:order-2 xl:w-auto xl:flex-1 xl:gap-2">
               <button
                 onClick={() => setBoardDate(shiftIsoDate(boardDate, -1))}
                 className="w-9 h-9 md:w-11 md:h-11 rounded-lg md:rounded-xl border border-slate-300 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-700"

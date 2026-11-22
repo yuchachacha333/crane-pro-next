@@ -250,7 +250,6 @@ function FormPage({
   }
   const widths = layout.cols || [];
   const total = widths.reduce((sum, width) => sum + Number(width || 0), 0) || 1;
-  const margin = layout.margin || { top: 12, right: 10, bottom: 12, left: 10 };
   const wrap = useRef<HTMLDivElement>(null);
   const [boxes, setBoxes] = useState<Record<number, { top: number; height: number }>>({});
   useLayoutEffect(() => {
@@ -283,27 +282,15 @@ function FormPage({
       observer?.disconnect();
     };
   }, [layout]);
-  const centered = raw && clip;
   return (
     <article
       className="dispatch-page"
       data-orient={layout.orientation === 'landscape' ? 'landscape' : 'portrait'}
       style={{
-        width: layout.orientation === 'landscape' ? '297mm' : '210mm',
-        minHeight: layout.orientation === 'landscape' ? '210mm' : '297mm',
-        margin: '0 auto 16px',
-        background: '#fff',
-        color: '#000',
-        padding: centered
-          ? `${(margin.top + margin.bottom) / 2}mm ${(margin.left + margin.right) / 2}mm`
-          : `${margin.top}mm ${margin.right}mm ${margin.bottom}mm ${margin.left}mm`,
-        ...(centered ? { display: 'flex', flexDirection: 'column' as const, justifyContent: 'center' } : {}),
-        boxSizing: 'border-box',
-        boxShadow: '0 8px 28px rgba(0,0,0,.18)',
-        fontFamily: '"Yu Gothic","Yu Gothic UI","Hiragino Sans",Meiryo,sans-serif',
+        ...pageFrame(layout),
       }}
     >
-      <div ref={wrap} style={{ position: 'relative' }}>
+      <div ref={wrap} style={{ position: 'relative', width: '100%', flex: '0 0 auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', overflow: 'visible' }}>
         <colgroup>
           {widths.map((width, index) => (
@@ -347,7 +334,7 @@ function FormPage({
                       printColorAdjust: 'exact',
                       position: !clipCell && text && !cell.wrap ? 'relative' : undefined,
                       overflow: clipCell ? 'hidden' : text && !cell.wrap ? 'visible' : undefined,
-                      whiteSpace: clipCell ? 'nowrap' : flow.whiteSpace,
+                      whiteSpace: 'pre',
                       textOverflow: clipCell ? 'clip' : undefined,
                     }}
                   >
@@ -429,7 +416,6 @@ function BoardPage({ layout, jobs, date }: { layout: SheetLayout; jobs: PrintJob
   });
   const widths = layout.cols || [];
   const total = widths.reduce((sum, width) => sum + Number(width || 0), 0) || 1;
-  const margin = layout.margin || { top: 19, right: 6, bottom: 16, left: 6 };
   const overflow = mapped.length > dataSlots ? mapped.length - dataSlots : 0;
   return (
     <>
@@ -442,15 +428,7 @@ function BoardPage({ layout, jobs, date }: { layout: SheetLayout; jobs: PrintJob
         className="dispatch-page"
         data-orient={layout.orientation === 'landscape' ? 'landscape' : 'portrait'}
         style={{
-          width: layout.orientation === 'landscape' ? '297mm' : '210mm',
-          minHeight: layout.orientation === 'landscape' ? '210mm' : '297mm',
-          margin: '0 auto 16px',
-          background: '#fff',
-          color: '#000',
-          padding: `${margin.top}mm ${margin.right}mm ${margin.bottom}mm ${margin.left}mm`,
-          boxSizing: 'border-box',
-          boxShadow: '0 8px 28px rgba(0,0,0,.18)',
-          fontFamily: '"Yu Gothic","Yu Gothic UI","Hiragino Sans",Meiryo,sans-serif',
+          ...pageFrame(layout),
         }}
       >
         <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
@@ -513,34 +491,68 @@ export function LayoutSheet({ layout, clip = false }: { layout: SheetLayout; cli
   return <FormPage layout={layout} raw clip={clip} />;
 }
 
-export async function shareSheetPages(title: string) {
+async function sheetsToPdf(title: string) {
   const pages = Array.from(document.querySelectorAll<HTMLElement>('.dispatch-page')).filter((page) => page.querySelector('table'));
-  if (!pages.length) return;
+  if (!pages.length) return null;
   const html2canvas = (await import('html2canvas')).default;
   const { jsPDF } = await import('jspdf');
   const orient = pages[0].getAttribute('data-orient') === 'landscape' ? 'l' : 'p';
   const pdf = new jsPDF({ orientation: orient, unit: 'mm', format: 'a4' });
-  const width = pdf.internal.pageSize.getWidth();
-  const height = pdf.internal.pageSize.getHeight();
-  // 画面の幅や拡大率に影響されないよう、画面外に原寸で複製して撮影する
+  pdf.setProperties({ title: title || ' ', author: ' ', creator: ' ', subject: ' ' });
+  const pageW = pdf.internal.pageSize.getWidth();
+  const pageH = pdf.internal.pageSize.getHeight();
+  // 画面の縮小表示を使わず、原寸の複製を撮る。1枚のひな形はPDFも1ページにする
   const stage = document.createElement('div');
-  stage.setAttribute('style', 'position:fixed;left:-20000px;top:0;width:1200px;background:#fff');
+  stage.setAttribute('style', 'position:fixed;left:0;top:0;z-index:-1;opacity:0.01;pointer-events:none;background:#fff');
   document.body.appendChild(stage);
   try {
     for (let i = 0; i < pages.length; i++) {
       const clone = pages[i].cloneNode(true) as HTMLElement;
+      const landscape = clone.getAttribute('data-orient') === 'landscape';
       clone.style.margin = '0';
       clone.style.boxShadow = 'none';
+      clone.style.transform = 'none';
+      clone.style.width = landscape ? '297mm' : '210mm';
+      clone.style.height = landscape ? '210mm' : '297mm';
+      clone.style.minHeight = '0';
+      clone.style.overflow = 'hidden';
+      clone.style.display = 'flex';
+      clone.style.flexDirection = 'column';
+      clone.style.justifyContent = 'center';
       stage.innerHTML = '';
       stage.appendChild(clone);
-      await new Promise((resolve) => window.setTimeout(resolve, 80));
-      const canvas = await html2canvas(clone, { scale: 2, backgroundColor: '#ffffff', useCORS: true, scrollX: 0, scrollY: 0 });
+      const inner = clone.firstElementChild as HTMLElement | null;
+      if (inner) {
+        inner.style.width = '100%';
+        inner.style.flex = '0 0 auto';
+        const avail = clone.clientHeight;
+        const need = inner.scrollHeight;
+        if (avail > 0 && need > avail) inner.style.zoom = String(avail / need);
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 60));
+      const canvas = await html2canvas(clone, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        useCORS: true,
+        scrollX: 0,
+        scrollY: 0,
+      });
+      const imgRatio = canvas.width / canvas.height;
+      const pageRatio = pageW / pageH;
+      const w = imgRatio > pageRatio ? pageW : pageH * imgRatio;
+      const h = imgRatio > pageRatio ? pageW / imgRatio : pageH;
       if (i > 0) pdf.addPage('a4', orient);
-      pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, width, height);
+      pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', (pageW - w) / 2, (pageH - h) / 2, w, h);
     }
   } finally {
     stage.remove();
   }
+  return pdf;
+}
+
+export async function shareSheetPages(title: string) {
+  const pdf = await sheetsToPdf(title);
+  if (!pdf) return;
   const blob = pdf.output('blob');
   const file = new File([blob], `${title}.pdf`, { type: 'application/pdf' });
   if (navigator.canShare?.({ files: [file] })) {
@@ -573,50 +585,63 @@ export function FitPages({ children }: { children: React.ReactNode }) {
     window.addEventListener('resize', fit);
     return () => window.removeEventListener('resize', fit);
   });
+  const page = box.current?.querySelector('.dispatch-page');
+  const tall = page?.getAttribute('data-orient') === 'landscape' ? 793.7 : 1122.5;
   return (
-    <div ref={box} style={zoom < 1 ? ({ zoom } as CSSProperties) : undefined}>
-      {children}
+    <div ref={box} className="sheet-fit" style={{ ['--z' as string]: String(zoom), width: '100%', overflow: 'hidden' }}>
+      <style>{'.sheet-fit td{border-width:calc(1px / var(--z)) !important}'}</style>
+      <div style={{ width: zoom < 1 ? `${(page?.getAttribute('data-orient') === 'landscape' ? 1122.5 : 793.7) * zoom}px` : undefined, height: zoom < 1 ? tall * zoom : undefined }}>
+        <div style={zoom < 1 ? { width: page?.getAttribute('data-orient') === 'landscape' ? 1122.5 : 793.7, transform: `scale(${zoom})`, transformOrigin: 'top left' } : undefined}>
+          {children}
+        </div>
+      </div>
     </div>
   );
 }
+
 export function printSheetPages() {
-  printPages();
+  void printPages();
 }
 
-function printPages() {
-  const pages = document.querySelectorAll('.dispatch-page');
-  if (!pages.length || !pages[0].querySelector('table')) return;
-  const orient = pages[0].getAttribute('data-orient') === 'landscape' ? 'landscape' : 'portrait';
-  const css =
-    `@page{size:A4 ${orient};margin:0}` +
-    'html,body{margin:0;padding:0;background:#fff;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
-    'body{font-family:"Yu Gothic","Yu Gothic UI","Hiragino Sans",Meiryo,sans-serif}' +
-    '.sheet{box-shadow:none !important;margin:0 !important;page-break-after:always;break-after:page;overflow:hidden;min-height:0 !important;height:' + (orient === 'landscape' ? '203mm' : '290mm') + ' !important}' +
-    '.sheet:last-child{page-break-after:auto;break-after:auto}' +
-    'table{width:100%;border-collapse:collapse;table-layout:fixed}' +
-    'td{-webkit-print-color-adjust:exact;print-color-adjust:exact}';
-  let body = '';
-  pages.forEach((page) => {
-    if (!page.querySelector('table')) return;
-    body += `<div class="sheet" style="${page.getAttribute('style') || ''}">${page.innerHTML}</div>`;
-  });
-  if (!body) return;
+async function printPages() {
+  const pdf = await sheetsToPdf(' ');
+  if (!pdf) return;
+  const url = URL.createObjectURL(pdf.output('blob'));
   const frame = document.createElement('iframe');
-  frame.setAttribute('style', 'position:fixed;width:0;height:0;border:0');
+  frame.setAttribute('style', 'position:fixed;left:0;top:0;width:210mm;height:297mm;border:0;opacity:0.01;pointer-events:none');
+  frame.src = url;
   document.body.appendChild(frame);
-  const doc = frame.contentDocument;
-  if (!doc || !frame.contentWindow) return;
-  doc.open();
-  doc.write(
-    `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title> </title><style>${css}</style></head><body>${body}</body></html>`
-  );
-  doc.close();
-  const printer = frame.contentWindow;
-  printer.onafterprint = () => frame.remove();
-  window.setTimeout(() => {
+  frame.onload = () => {
+    const printer = frame.contentWindow;
+    if (!printer) return;
+    printer.onafterprint = () => {
+      frame.remove();
+      URL.revokeObjectURL(url);
+    };
     printer.focus();
     printer.print();
-  }, 300);
+  };
+}
+
+function pageFrame(layout: SheetLayout): CSSProperties {
+  const margin = layout.margin || { top: 12, right: 10, bottom: 12, left: 10 };
+  const landscape = layout.orientation === 'landscape';
+  const padY = (Number(margin.top) + Number(margin.bottom)) / 2;
+  const padX = (Number(margin.left) + Number(margin.right)) / 2;
+  return {
+    width: landscape ? '297mm' : '210mm',
+    minHeight: landscape ? '210mm' : '297mm',
+    margin: '0 auto 16px',
+    background: '#fff',
+    color: '#000',
+    padding: `${padY}mm ${padX}mm`,
+    boxSizing: 'border-box',
+    boxShadow: '0 8px 28px rgba(0,0,0,.18)',
+    fontFamily: '"Yu Gothic","Yu Gothic UI","Hiragino Sans",Meiryo,sans-serif',
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+  };
 }
 
 export default function PrintPreview({

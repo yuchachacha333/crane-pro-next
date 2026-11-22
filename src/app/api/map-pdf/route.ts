@@ -32,7 +32,7 @@ function project(lat: number, lng: number, zoom: number) {
 
 function safeName(value: string) {
   const cleaned = value.replace(/[\\/:*?"<>|\r\n]/g, ' ').replace(/\s+/g, ' ').trim();
-  return cleaned.slice(0, 80) || '地図';
+  return cleaned.slice(0, 160) || '地図';
 }
 
 export async function GET(request: Request) {

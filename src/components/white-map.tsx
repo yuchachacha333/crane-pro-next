@@ -37,7 +37,8 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
   const [phone, setPhone] = useState(false);
   const [layoutReady, setLayoutReady] = useState(false);
 
-  const fileBase = `${date || '日付なし'}_${siteName.replace(/[\\/:*?"<>|\r\n]/g, ' ').replace(/\s+/g, ' ').trim() || '現場'}`;
+  const filePart = (value: string) => value.replace(/[\\/:*?"<>|\r\n]/g, ' ').replace(/\s+/g, ' ').trim();
+  const fileBase = [date || '日付なし', filePart(siteName) || '現場', filePart(address)].filter(Boolean).join('_');
   const pdfHref =
     point && mapSize.width > 0 && mapSize.height > 0
       ? `/api/map-pdf?lat=${point.lat}&lng=${point.lng}&w=${Math.round(mapSize.width)}&h=${Math.round(mapSize.height)}&file=${encodeURIComponent(fileBase)}`
