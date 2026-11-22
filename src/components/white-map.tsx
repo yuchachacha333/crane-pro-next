@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { downloadMapWord } from '@/lib/map-word';
+import { downloadMapPdf, downloadMapWord } from '@/lib/map-word';
 
 type Props = {
   address: string;
@@ -41,7 +41,7 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
         setStatus('この住所の位置が見つかりませんでした');
         return;
       }
-      const cond = encodeURIComponent('action:place;maptype:twoTones');
+      const cond = encodeURIComponent('maptype:twoTones');
       setSrc(
         `https://map.yahoo.co.jp/embedmap/V3/embedmap?lat=${found.lat}&lon=${found.lng}&zoom=17&cond=${cond}&width=1600&height=1200`
       );
@@ -103,13 +103,15 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
       if (!blob) throw new Error('empty');
       const site = siteName.replace(/[\\/:*?"<>|\r\n]/g, ' ').replace(/\s+/g, ' ').trim() || '現場';
-      await downloadMapWord(blob, canvas.width, canvas.height, `${date || '日付なし'}_${site}`);
+      const fileBase = `${date || '日付なし'}_${site}`;
+      if (isPhone()) await downloadMapPdf(blob, fileBase);
+      else await downloadMapWord(blob, fileBase);
       setStatus(place || address);
     } catch (error) {
       const name = error instanceof DOMException ? error.name : '';
       if (name === 'NotAllowedError' || name === 'AbortError') setStatus(place || address);
-      else if (name === 'NotSupportedError') setStatus('Chrome または Edge で開くと、ワードに出力できます');
-      else setStatus('ワードに出力できませんでした');
+      else if (name === 'NotSupportedError') setStatus('Chrome または Edge で開くと出力できます');
+      else if (name !== 'AbortError') setStatus(isPhone() ? 'PDFに出力できませんでした' : 'ワードに出力できませんでした');
     } finally {
       stream?.getTracks().forEach((track) => track.stop());
       bitmap?.close();
@@ -132,7 +134,7 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
               disabled={!src || saving}
               className="h-10 px-3 rounded-xl bg-slate-900 text-white font-bold disabled:opacity-40"
             >
-              ワードに出力
+              {isPhone() ? 'PDFに出力' : 'ワードに出力'}
             </button>
             <button type="button" onClick={onClose} className="h-10 px-3 rounded-xl border border-slate-300 font-bold">
               閉じる
@@ -141,15 +143,27 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
         </div>
         <div ref={sheetRef} className="flex flex-col flex-1 min-h-0 bg-white" style={{ isolation: 'isolate' }}>
           <p className="px-4 py-2 border-b border-slate-200 text-base font-extrabold">{address}</p>
-          {src ? (
-            <iframe title={`${address}のヤフー地図`} src={src} className="flex-1 w-full min-h-0 bg-white" />
-          ) : (
-            <div className="flex-1 bg-white" />
-          )}
+          <div className="relative flex-1 min-h-0 bg-white">
+            {src ? (
+              <iframe title={`${address}のヤフー地図`} src={src} className="absolute inset-0 h-full w-full" />
+            ) : null}
+            {src ? (
+              <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-full" aria-hidden>
+                <svg xmlns="http://www.w3.org/2000/svg" width="36" height="48" viewBox="0 0 36 48">
+                  <path d="M18 47S2 29 2 18a16 16 0 1 1 32 0C34 29 18 47 18 47z" fill="#111" stroke="#fff" strokeWidth="2" />
+                  <circle cx="18" cy="18" r="6.5" fill="#fff" />
+                </svg>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>
   );
+}
+
+function isPhone() {
+  return window.matchMedia('(pointer: coarse), (max-width: 1023px)').matches;
 }
 
 function cropMap(bitmap: ImageBitmap, sheet: HTMLElement) {
