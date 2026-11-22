@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { FitPages, LayoutSheet, printSheetPages, shareSheetPages } from '@/components/print-preview';
+import { createSheetFile, FitPages, LayoutSheet, printSheetPages, shareSheetPages } from '@/components/print-preview';
 import { fillInvoiceLayout, type InvoiceCustomer, type InvoiceLine } from '@/lib/invoice-sheet';
 import type { SheetLayout } from '@/lib/sheet-layout';
 
@@ -17,6 +17,7 @@ export default function InvoicePreview({
   const [layout, setLayout] = useState<SheetLayout | null>(null);
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
+  const [shareFile, setShareFile] = useState<File | null>(null);
 
   const requestKey = JSON.stringify({ customer, lines });
 
@@ -40,6 +41,21 @@ export default function InvoicePreview({
     };
   }, [requestKey]);
 
+  useEffect(() => {
+    if (!layout) return;
+    let cancelled = false;
+    setShareFile(null);
+    const timer = window.setTimeout(() => {
+      createSheetFile('請求書').then((file) => {
+        if (!cancelled) setShareFile(file);
+      }).catch(() => undefined);
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [layout]);
+
   return (
     <div className="fixed inset-0 z-[60] overflow-auto bg-slate-300">
       <div className="no-print sticky top-0 z-10 flex items-center justify-between gap-3 bg-slate-900 px-4 py-3 text-white">
@@ -50,10 +66,11 @@ export default function InvoicePreview({
           </button>
           <button
             type="button"
-            onClick={() => shareSheetPages('請求書').catch(() => undefined)}
-            className="h-10 px-4 rounded-lg bg-white font-extrabold text-slate-800"
+            onClick={() => shareSheetPages('請求書', shareFile).catch(() => undefined)}
+            className="h-10 px-4 rounded-lg bg-white font-extrabold text-slate-800 disabled:opacity-50"
+            disabled={!shareFile}
           >
-            共有
+            {shareFile ? '共有' : '準備中'}
           </button>
           <button type="button" onClick={onClose} className="h-10 px-4 rounded-lg bg-white font-extrabold text-slate-800">
             閉じる

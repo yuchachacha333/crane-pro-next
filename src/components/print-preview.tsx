@@ -550,16 +550,27 @@ async function sheetsToPdf(title: string) {
   return pdf;
 }
 
-export async function shareSheetPages(title: string) {
+export async function createSheetFile(title: string) {
   const pdf = await sheetsToPdf(title);
-  if (!pdf) return;
+  if (!pdf) return null;
   const blob = pdf.output('blob');
-  const file = new File([blob], `${title}.pdf`, { type: 'application/pdf' });
-  if (navigator.canShare?.({ files: [file] })) {
-    await navigator.share({ files: [file], title });
-    return;
+  return new File([blob], `${title}.pdf`, { type: 'application/pdf' });
+}
+
+export async function shareSheetPages(title: string, prepared?: File | null) {
+  const file = prepared || (await createSheetFile(title));
+  if (!file) return;
+  if (navigator.share) {
+    try {
+      // Safariには canShare がない版もあるため、share を直接試す。
+      await navigator.share({ files: [file], title });
+      return;
+    } catch (error) {
+      // ユーザー自身が共有画面を閉じた場合は、ダウンロードへ切り替えない。
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+    }
   }
-  const url = URL.createObjectURL(blob);
+  const url = URL.createObjectURL(file);
   const link = document.createElement('a');
   link.href = url;
   link.download = file.name;
@@ -608,16 +619,15 @@ function printPages() {
   const orient = pages[0].getAttribute('data-orient') === 'landscape' ? 'landscape' : 'portrait';
   const sheetW = orient === 'landscape' ? '297mm' : '210mm';
   const sheetH = orient === 'landscape' ? '210mm' : '297mm';
-  // Chromium は A4 と同じ高さの要素を端数処理で次ページへ送ることがある。
-  // 用紙を 94% で描画し、短い固定枠に収めることで空白の2ページ目を確実に防ぐ。
-  const frameH = orient === 'landscape' ? '198mm' : '280mm';
+  // Chromium の端数による空白ページだけを避けるため、縮小は目立たない2%に留める。
+  const frameH = orient === 'landscape' ? '206mm' : '292mm';
   const css =
     `@page{size:A4 ${orient};margin:0}` +
     'html,body{margin:0;padding:0;background:#fff;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
     'body{font-family:"Yu Gothic","Yu Gothic UI","Hiragino Sans",Meiryo,sans-serif}' +
     `.print-page{position:relative;width:${sheetW};height:${frameH};overflow:hidden;break-inside:avoid;page-break-inside:avoid}` +
     '.print-page + .print-page{break-before:page;page-break-before:always}' +
-    `.sheet{position:absolute !important;left:3% !important;top:0 !important;box-shadow:none !important;margin:0 !important;overflow:hidden !important;box-sizing:border-box !important;width:${sheetW} !important;height:${sheetH} !important;min-height:0 !important;transform:scale(.94);transform-origin:top left}` +
+    `.sheet{position:absolute !important;left:1% !important;top:0 !important;box-shadow:none !important;margin:0 !important;overflow:hidden !important;box-sizing:border-box !important;width:${sheetW} !important;height:${sheetH} !important;min-height:0 !important;transform:scale(.98);transform-origin:top left}` +
     'table{width:100%;border-collapse:collapse;table-layout:fixed}' +
     'td{-webkit-print-color-adjust:exact;print-color-adjust:exact}';
   let body = '';
@@ -679,6 +689,7 @@ export default function PrintPreview({
 }) {
   const [layout, setLayout] = useState<SheetLayout | null>(null);
   const [error, setError] = useState('');
+  const [shareFile, setShareFile] = useState<File | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -699,6 +710,21 @@ export default function PrintPreview({
   }, [kind]);
 
   const pages = jobs;
+  useEffect(() => {
+    if (!layout) return;
+    let cancelled = false;
+    setShareFile(null);
+    const timer = window.setTimeout(() => {
+      createSheetFile(TITLES[kind]).then((file) => {
+        if (!cancelled) setShareFile(file);
+      }).catch(() => undefined);
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [layout, kind, jobs]);
+
   return (
     <div className="fixed inset-0 z-[60] overflow-auto bg-slate-300">
       <div className="no-print sticky top-0 z-10 flex items-center justify-between gap-3 bg-slate-900 px-4 py-3 text-white">
@@ -711,15 +737,14 @@ export default function PrintPreview({
           >
             印刷
           </button>
-          {kind !== 'board' && (
-            <button
-              type="button"
-              onClick={() => shareSheetPages(TITLES[kind]).catch(() => undefined)}
-              className="h-10 px-4 rounded-lg bg-white font-extrabold text-slate-800"
-            >
-              共有
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => shareSheetPages(TITLES[kind], shareFile).catch(() => undefined)}
+            className="h-10 px-4 rounded-lg bg-white font-extrabold text-slate-800 disabled:opacity-50"
+            disabled={!shareFile}
+          >
+            {shareFile ? '共有' : '準備中'}
+          </button>
           <button type="button" onClick={onClose} className="h-10 px-4 rounded-lg bg-white font-extrabold text-slate-800">
             閉じる
           </button>
