@@ -26,7 +26,7 @@ import SuggestInput, { type SuggestOption } from '@/components/suggest-input';
 import NamePicker from '@/components/name-picker';
 import AttachDialog from '@/components/attach-dialog';
 import WhiteMapDialog from '@/components/white-map';
-import NearbyPartners, { type NearbyPartner } from '@/components/nearby-partners';
+import NearbyPartners, { type CallNumber, type NearbyPartner } from '@/components/nearby-partners';
 import { supabase, getDefaultCompanyId } from '@/lib/supabase';
 import { sameCode, sameParty, partyKey } from '@/lib/party-name';
 import { toHalfwidthTime } from '@/lib/time-text';
@@ -551,24 +551,45 @@ export default function CraneProApp() {
     if (!address) return;
     setNearbyTarget({ address, siteName: row.site_name || '現場' });
   };
-  const nearbyPartners = useMemo<NearbyPartner[]>(
-    () =>
-      customers
-        .filter((customer) => customer.name && String(customer.partner_type || '').includes('仕入'))
-        .map((customer) => {
-          const lat = customer.latitude == null || customer.latitude === '' ? null : Number(customer.latitude);
-          const lng = customer.longitude == null || customer.longitude === '' ? null : Number(customer.longitude);
-          return {
-            id: String(customer.id || customer.code),
-            name: String(customer.name),
-            tel: String(customer.tel || ''),
-            address: [customer.address1, customer.address2].filter(Boolean).join(' '),
-            lat: lat != null && Number.isFinite(lat) ? lat : null,
-            lng: lng != null && Number.isFinite(lng) ? lng : null,
-          };
-        }),
-    [customers]
-  );
+  const nearbyPartners = useMemo<NearbyPartner[]>(() => {
+    const addCall = (calls: CallNumber[], seen: Set<string>, raw: string, person?: string, mobileOnly = false) => {
+      const digits = String(raw || '').replace(/\D/g, '');
+      if (digits.length < 10 || seen.has(digits)) return;
+      const mobile = /^(070|080|090)\d{8}$/.test(digits);
+      if (mobileOnly && !mobile) return;
+      seen.add(digits);
+      calls.push({
+        label: mobile ? (person ? `携帯 ${person}` : '携帯') : '電話',
+        display: String(raw).trim(),
+        digits,
+      });
+    };
+    return customers
+      .filter((customer) => customer.name && String(customer.partner_type || '').includes('仕入'))
+      .map((customer) => {
+        const lat = customer.latitude == null || customer.latitude === '' ? null : Number(customer.latitude);
+        const lng = customer.longitude == null || customer.longitude === '' ? null : Number(customer.longitude);
+        const calls: CallNumber[] = [];
+        const seen = new Set<string>();
+        addCall(calls, seen, String(customer.tel || ''));
+        addCall(calls, seen, String(customer.tel2 || ''));
+        contacts
+          .filter(
+            (person) =>
+              (customer.code && String(person.customer_code || '') === String(customer.code)) ||
+              (customer.name && person.customer_name === customer.name)
+          )
+          .forEach((person) => addCall(calls, seen, person.tel, person.name, true));
+        return {
+          id: String(customer.id || customer.code),
+          name: String(customer.name),
+          address: [customer.address1, customer.address2].filter(Boolean).join(' '),
+          lat: lat != null && Number.isFinite(lat) ? lat : null,
+          lng: lng != null && Number.isFinite(lng) ? lng : null,
+          calls,
+        };
+      });
+  }, [contacts, customers]);
   const isOwnOperator = (name: string) =>
     operators.some((op) => String(op.name || '').trim() && String(op.name).trim() === String(name || '').trim());
   const registerSite = (row: DispatchRecord) => {

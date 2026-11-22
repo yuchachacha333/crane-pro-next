@@ -75,6 +75,26 @@ export async function downloadMapImage(png: Blob, fileBase: string) {
   saveBlob(png, file.name);
 }
 
+export async function buildVisibleMapPdf(png: Blob, fileBase: string, widthPx: number, heightPx: number) {
+  const { jsPDF } = await import('jspdf');
+  const longSide = Math.max(widthPx, heightPx, 1);
+  const mmPerPx = 280 / longSide;
+  const pageW = widthPx * mmPerPx;
+  const pageH = heightPx * mmPerPx;
+  const pdf = new jsPDF({
+    orientation: pageW >= pageH ? 'l' : 'p',
+    unit: 'mm',
+    format: [pageW, pageH],
+  });
+  pdf.addImage(await blobToDataUrl(png), 'PNG', 0, 0, pageW, pageH);
+  const blob = pdf.output('blob');
+  return new File([blob], `${fileBase}.pdf`, { type: 'application/pdf' });
+}
+
+export function saveNamedFile(blob: Blob, name: string) {
+  saveBlob(blob, name);
+}
+
 export async function downloadMapPdf(png: Blob, fileBase: string) {
   const { jsPDF } = await import('jspdf');
   const pdf = new jsPDF({ orientation: 'l', unit: 'mm', format: 'a4' });
