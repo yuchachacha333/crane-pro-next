@@ -588,8 +588,7 @@ export function FitPages({ children }: { children: React.ReactNode }) {
   const page = box.current?.querySelector('.dispatch-page');
   const tall = page?.getAttribute('data-orient') === 'landscape' ? 793.7 : 1122.5;
   return (
-    <div ref={box} className="sheet-fit" style={{ ['--z' as string]: String(zoom), width: '100%', overflow: 'hidden' }}>
-      <style>{'.sheet-fit td{border-width:calc(1px / var(--z)) !important}'}</style>
+    <div ref={box} style={{ width: '100%', overflow: 'hidden' }}>
       <div style={{ width: zoom < 1 ? `${(page?.getAttribute('data-orient') === 'landscape' ? 1122.5 : 793.7) * zoom}px` : undefined, height: zoom < 1 ? tall * zoom : undefined }}>
         <div style={zoom < 1 ? { width: page?.getAttribute('data-orient') === 'landscape' ? 1122.5 : 793.7, transform: `scale(${zoom})`, transformOrigin: 'top left' } : undefined}>
           {children}
@@ -600,27 +599,44 @@ export function FitPages({ children }: { children: React.ReactNode }) {
 }
 
 export function printSheetPages() {
-  void printPages();
+  printPages();
 }
 
-async function printPages() {
-  const pdf = await sheetsToPdf(' ');
-  if (!pdf) return;
-  const url = URL.createObjectURL(pdf.output('blob'));
+function printPages() {
+  const pages = Array.from(document.querySelectorAll<HTMLElement>('.dispatch-page')).filter((page) => page.querySelector('table'));
+  if (!pages.length) return;
+  const orient = pages[0].getAttribute('data-orient') === 'landscape' ? 'landscape' : 'portrait';
+  const sheetW = orient === 'landscape' ? '297mm' : '210mm';
+  const sheetH = orient === 'landscape' ? '209mm' : '296mm';
+  const css =
+    `@page{size:A4 ${orient};margin:0}` +
+    'html,body{margin:0;padding:0;background:#fff;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
+    'body{font-family:"Yu Gothic","Yu Gothic UI","Hiragino Sans",Meiryo,sans-serif}' +
+    `.sheet{box-shadow:none !important;margin:0 !important;overflow:hidden !important;box-sizing:border-box !important;width:${sheetW} !important;height:${sheetH} !important;min-height:0 !important;break-after:auto;page-break-after:auto;break-inside:avoid}` +
+    '.sheet + .sheet{break-before:page;page-break-before:always}' +
+    'table{width:100%;border-collapse:collapse;table-layout:fixed}' +
+    'td{-webkit-print-color-adjust:exact;print-color-adjust:exact}';
+  let body = '';
+  pages.forEach((page) => {
+    body += `<div class="sheet" style="${page.getAttribute('style') || ''}">${page.innerHTML}</div>`;
+  });
   const frame = document.createElement('iframe');
-  frame.setAttribute('style', 'position:fixed;left:0;top:0;width:210mm;height:297mm;border:0;opacity:0.01;pointer-events:none');
-  frame.src = url;
+  frame.setAttribute('style', 'position:fixed;left:-10000px;top:0;width:1400px;height:1800px;border:0');
   document.body.appendChild(frame);
-  frame.onload = () => {
-    const printer = frame.contentWindow;
-    if (!printer) return;
-    printer.onafterprint = () => {
-      frame.remove();
-      URL.revokeObjectURL(url);
-    };
+  const doc = frame.contentDocument;
+  const printer = frame.contentWindow;
+  if (!doc || !printer) {
+    frame.remove();
+    return;
+  }
+  doc.open();
+  doc.write(`<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title> </title><style>${css}</style></head><body>${body}</body></html>`);
+  doc.close();
+  printer.onafterprint = () => frame.remove();
+  window.setTimeout(() => {
     printer.focus();
     printer.print();
-  };
+  }, 200);
 }
 
 function pageFrame(layout: SheetLayout): CSSProperties {
@@ -677,12 +693,6 @@ export default function PrintPreview({
       cancelled = true;
     };
   }, [kind]);
-
-  useEffect(() => {
-    if (!layout) return;
-    const timer = window.setTimeout(() => printPages(), 400);
-    return () => window.clearTimeout(timer);
-  }, [layout]);
 
   const pages = jobs;
   return (

@@ -40,12 +40,6 @@ export default function InvoicePreview({
     };
   }, [requestKey]);
 
-  useEffect(() => {
-    if (!layout) return;
-    const timer = window.setTimeout(() => printSheetPages(), 400);
-    return () => window.clearTimeout(timer);
-  }, [layout]);
-
   return (
     <div className="fixed inset-0 z-[60] overflow-auto bg-slate-300">
       <div className="no-print sticky top-0 z-10 flex items-center justify-between gap-3 bg-slate-900 px-4 py-3 text-white">
