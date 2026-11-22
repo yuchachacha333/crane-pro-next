@@ -61,7 +61,11 @@ export default function InvoicePreview({
       <div className="no-print sticky top-0 z-10 flex items-center justify-between gap-3 bg-slate-900 px-4 py-3 text-white">
         <div className="font-extrabold">請求書　{customer.name}</div>
         <div className="flex items-center gap-2">
-          <button type="button" onClick={printSheetPages} className="h-10 px-4 rounded-lg bg-teal-500 font-extrabold text-slate-950">
+          <button
+            type="button"
+            onClick={() => printSheetPages(shareFile, '請求書')}
+            className="h-10 px-4 rounded-lg bg-teal-500 font-extrabold text-slate-950"
+          >
             印刷
           </button>
           <button

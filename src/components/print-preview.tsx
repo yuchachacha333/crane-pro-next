@@ -595,11 +595,37 @@ export function FitPages({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function printSheetPages() {
+export function printSheetPages(prepared?: File | null, title = '書類') {
+  if (isMobilePrint()) {
+    void openPdfForMobilePrint(prepared, title);
+    return;
+  }
   printPages();
 }
 
 let printInProgress = false;
+
+async function openPdfForMobilePrint(prepared?: File | null, title = '書類') {
+  // 非同期生成後の window.open はSafariにブロックされるため、タップ直後にタブを確保する。
+  const tab = window.open('about:blank', '_blank');
+  const file = prepared || (await createSheetFile(title));
+  if (!file) {
+    tab?.close();
+    return;
+  }
+  const url = URL.createObjectURL(file);
+  if (tab) tab.location.replace(url);
+  else window.location.href = url;
+  window.setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000);
+}
+
+function isMobilePrint() {
+  if (typeof navigator === 'undefined') return false;
+  return (
+    /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  );
+}
 
 function printPages() {
   if (printInProgress) return;
@@ -735,7 +761,7 @@ export default function PrintPreview({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={printPages}
+            onClick={() => printSheetPages(shareFile, TITLES[kind])}
             className="h-10 px-4 rounded-lg bg-teal-500 font-extrabold text-slate-950"
           >
             印刷
