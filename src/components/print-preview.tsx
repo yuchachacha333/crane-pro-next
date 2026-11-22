@@ -283,6 +283,7 @@ function FormPage({
       observer?.disconnect();
     };
   }, [layout]);
+  const centered = raw && clip;
   return (
     <article
       className="dispatch-page"
@@ -293,7 +294,10 @@ function FormPage({
         margin: '0 auto 16px',
         background: '#fff',
         color: '#000',
-        padding: `${margin.top}mm ${margin.right}mm ${margin.bottom}mm ${margin.left}mm`,
+        padding: centered
+          ? `${(margin.top + margin.bottom) / 2}mm ${(margin.left + margin.right) / 2}mm`
+          : `${margin.top}mm ${margin.right}mm ${margin.bottom}mm ${margin.left}mm`,
+        ...(centered ? { display: 'flex', flexDirection: 'column' as const, justifyContent: 'center' } : {}),
         boxSizing: 'border-box',
         boxShadow: '0 8px 28px rgba(0,0,0,.18)',
         fontFamily: '"Yu Gothic","Yu Gothic UI","Hiragino Sans",Meiryo,sans-serif',
@@ -510,16 +514,33 @@ export function LayoutSheet({ layout, clip = false }: { layout: SheetLayout; cli
 }
 
 export async function shareSheetPages(title: string) {
-  const page = document.querySelector('.dispatch-page') as HTMLElement | null;
-  if (!page) return;
+  const pages = Array.from(document.querySelectorAll<HTMLElement>('.dispatch-page')).filter((page) => page.querySelector('table'));
+  if (!pages.length) return;
   const html2canvas = (await import('html2canvas')).default;
   const { jsPDF } = await import('jspdf');
-  const canvas = await html2canvas(page, { scale: 2, backgroundColor: '#ffffff', useCORS: true });
-  const orient = page.getAttribute('data-orient') === 'landscape' ? 'l' : 'p';
+  const orient = pages[0].getAttribute('data-orient') === 'landscape' ? 'l' : 'p';
   const pdf = new jsPDF({ orientation: orient, unit: 'mm', format: 'a4' });
   const width = pdf.internal.pageSize.getWidth();
   const height = pdf.internal.pageSize.getHeight();
-  pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, width, height);
+  // 画面の幅や拡大率に影響されないよう、画面外に原寸で複製して撮影する
+  const stage = document.createElement('div');
+  stage.setAttribute('style', 'position:fixed;left:-20000px;top:0;width:1200px;background:#fff');
+  document.body.appendChild(stage);
+  try {
+    for (let i = 0; i < pages.length; i++) {
+      const clone = pages[i].cloneNode(true) as HTMLElement;
+      clone.style.margin = '0';
+      clone.style.boxShadow = 'none';
+      stage.innerHTML = '';
+      stage.appendChild(clone);
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
+      const canvas = await html2canvas(clone, { scale: 2, backgroundColor: '#ffffff', useCORS: true, scrollX: 0, scrollY: 0 });
+      if (i > 0) pdf.addPage('a4', orient);
+      pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, width, height);
+    }
+  } finally {
+    stage.remove();
+  }
   const blob = pdf.output('blob');
   const file = new File([blob], `${title}.pdf`, { type: 'application/pdf' });
   if (navigator.canShare?.({ files: [file] })) {
@@ -534,6 +555,30 @@ export async function shareSheetPages(title: string) {
   URL.revokeObjectURL(url);
 }
 
+/** 画面が狭いとき（スマホ・iPad）は、A4の版面をそのまま縮小して全体を見せる */
+export function FitPages({ children }: { children: React.ReactNode }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [zoom, setZoom] = useState(1);
+  useLayoutEffect(() => {
+    const fit = () => {
+      const root = box.current;
+      if (!root) return;
+      const page = root.querySelector('.dispatch-page');
+      const natural = page?.getAttribute('data-orient') === 'landscape' ? 1122.5 : 793.7;
+      const room = (root.parentElement?.clientWidth || window.innerWidth) - 32;
+      const next = Math.min(1, Math.max(0.2, room / natural));
+      setZoom((prev) => (Math.abs(prev - next) < 0.005 ? prev : next));
+    };
+    fit();
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  });
+  return (
+    <div ref={box} style={zoom < 1 ? ({ zoom } as CSSProperties) : undefined}>
+      {children}
+    </div>
+  );
+}
 export function printSheetPages() {
   printPages();
 }
@@ -546,7 +591,7 @@ function printPages() {
     `@page{size:A4 ${orient};margin:0}` +
     'html,body{margin:0;padding:0;background:#fff;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact}' +
     'body{font-family:"Yu Gothic","Yu Gothic UI","Hiragino Sans",Meiryo,sans-serif}' +
-    '.sheet{box-shadow:none !important;margin:0 !important;page-break-after:always;break-after:page;overflow:hidden;min-height:0 !important;height:' + (orient === 'landscape' ? '209mm' : '296mm') + ' !important}' +
+    '.sheet{box-shadow:none !important;margin:0 !important;page-break-after:always;break-after:page;overflow:hidden;min-height:0 !important;height:' + (orient === 'landscape' ? '203mm' : '290mm') + ' !important}' +
     '.sheet:last-child{page-break-after:auto;break-after:auto}' +
     'table{width:100%;border-collapse:collapse;table-layout:fixed}' +
     'td{-webkit-print-color-adjust:exact;print-color-adjust:exact}';
@@ -641,9 +686,10 @@ export default function PrintPreview({
           </button>
         </div>
       </div>
-      <div className="overflow-x-auto px-4 py-6">
+      <div className="px-4 py-6">
         {error && <p className="text-center font-bold text-rose-700">{error}</p>}
         {!layout && !error && <p className="text-center font-bold text-slate-700">ひな形を読み込んでいます。</p>}
+        <FitPages>
         {layout && kind === 'board' && <BoardPage layout={layout} jobs={pages} date={date} />}
         {layout && kind !== 'board' && pages.length === 0 && (
           <p className="text-center font-bold text-slate-700">印刷する配車がありません。</p>
@@ -651,6 +697,7 @@ export default function PrintPreview({
         {layout &&
           kind !== 'board' &&
           pages.map((job) => <FormPage key={job.id} layout={layout} job={job} sites={sites} />)}
+        </FitPages>
       </div>
     </div>
   );

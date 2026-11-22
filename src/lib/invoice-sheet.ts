@@ -140,6 +140,23 @@ export function fillInvoiceLayout(
       cell.text = value == null || value === '' ? '' : field === 'price' || field === 'amount' ? comma(Number(value)) : String(value);
     }
   });
+  // 機種が見切れないよう、現場名の列から幅を分けてもらう（現場名は短くなってよい）
+  {
+    const machineCol = (roles as Record<string, number> | null)?.machine;
+    const siteCol = (roles as Record<string, number> | null)?.site;
+    if (machineCol != null && siteCol != null && machineCol !== siteCol && Array.isArray(layout.cols)) {
+      const units = (text: string) => Array.from(text).reduce((sum, ch) => sum + (/[\u0000-\u00ff\uff61-\uff9f]/.test(ch) ? 1 : 2), 0);
+      const longest = Math.max(0, ...lines.map((line) => units(String(line.machine || ''))));
+      const cols = layout.cols as unknown as number[];
+      let need = longest * 0.85 + 1.5 - Number(cols[machineCol] || 0);
+      for (let c = siteCol; need > 0 && c < siteCol + 3 && c < cols.length; c++) {
+        const give = Math.min(need, Math.max(0, Number(cols[c]) - 2));
+        cols[c] = Number(cols[c]) - give;
+        cols[machineCol] = Number(cols[machineCol]) + give;
+        need -= give;
+      }
+    }
+  }
   let base = 0;
   for (const line of lines) {
     const amount = Number(String(line.amount ?? '').replace(/,/g, ''));
