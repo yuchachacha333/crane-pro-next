@@ -41,7 +41,7 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
         setStatus('この住所の位置が見つかりませんでした');
         return;
       }
-      const cond = encodeURIComponent('maptype:twoTones');
+      const cond = encodeURIComponent('action:place;maptype:twoTones');
       setSrc(
         `https://map.yahoo.co.jp/embedmap/V3/embedmap?lat=${found.lat}&lon=${found.lng}&zoom=17&cond=${cond}&width=1600&height=1200`
       );
@@ -141,19 +141,15 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
             </button>
           </div>
         </div>
-        <div ref={sheetRef} className="flex flex-col flex-1 min-h-0 bg-white" style={{ isolation: 'isolate' }}>
+        <div className="flex flex-col flex-1 min-h-0 bg-white">
           <p className="px-4 py-2 border-b border-slate-200 text-base font-extrabold">{address}</p>
-          <div className="relative flex-1 min-h-0 bg-white">
+          <div ref={sheetRef} className="relative flex-1 min-h-0 bg-white" style={{ isolation: 'isolate' }}>
             {src ? (
-              <iframe title={`${address}のヤフー地図`} src={src} className="absolute inset-0 h-full w-full" />
-            ) : null}
-            {src ? (
-              <div className="pointer-events-none absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-full" aria-hidden>
-                <svg xmlns="http://www.w3.org/2000/svg" width="36" height="48" viewBox="0 0 36 48">
-                  <path d="M18 47S2 29 2 18a16 16 0 1 1 32 0C34 29 18 47 18 47z" fill="#111" stroke="#fff" strokeWidth="2" />
-                  <circle cx="18" cy="18" r="6.5" fill="#fff" />
-                </svg>
-              </div>
+              <iframe
+                title={`${address}のヤフー地図`}
+                src={src}
+                className="absolute inset-0 h-full w-full [clip-path:polygon(252px_0,100%_0,100%_100%,0_100%,0_128px,252px_128px)] max-[1023px]:[clip-path:inset(140px_0_0_0)]"
+              />
             ) : null}
           </div>
         </div>

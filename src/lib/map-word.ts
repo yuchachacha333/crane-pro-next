@@ -1,5 +1,5 @@
-const PAGE_W_MM = 210;
-const PAGE_H_MM = 297;
+const PAGE_W_MM = 297;
+const PAGE_H_MM = 210;
 
 export async function downloadMapWord(png: Blob, fileBase: string) {
   const {
@@ -8,6 +8,7 @@ export async function downloadMapWord(png: Blob, fileBase: string) {
     HorizontalPositionRelativeFrom,
     ImageRun,
     Packer,
+    PageOrientation,
     Paragraph,
     TextWrappingType,
     VerticalPositionRelativeFrom,
@@ -18,8 +19,9 @@ export async function downloadMapWord(png: Blob, fileBase: string) {
         properties: {
           page: {
             size: {
-              width: convertMillimetersToTwip(PAGE_W_MM),
-              height: convertMillimetersToTwip(PAGE_H_MM),
+              width: convertMillimetersToTwip(PAGE_H_MM),
+              height: convertMillimetersToTwip(PAGE_W_MM),
+              orientation: PageOrientation.LANDSCAPE,
             },
             margin: { top: 0, bottom: 0, left: 0, right: 0, header: 0, footer: 0 },
           },
@@ -55,7 +57,7 @@ export async function downloadMapWord(png: Blob, fileBase: string) {
 
 export async function downloadMapPdf(png: Blob, fileBase: string) {
   const { jsPDF } = await import('jspdf');
-  const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
+  const pdf = new jsPDF({ orientation: 'l', unit: 'mm', format: 'a4' });
   pdf.addImage(await blobToDataUrl(png), 'PNG', 0, 0, PAGE_W_MM, PAGE_H_MM);
   const blob = pdf.output('blob');
   const file = new File([blob], `${fileBase}.pdf`, { type: 'application/pdf' });
