@@ -154,7 +154,6 @@ export default function SalesClient() {
     return list;
   }, [rows, view]);
 
-  const maxValue = Math.max(1, ...groups.map((g) => (view === 'supplier' ? g.cost : g.sales)));
   const gross = totals.sales - totals.cost;
   const tabs: { key: View; label: string }[] = [
     { key: 'customer', label: '得意先別（売上）' },
@@ -162,8 +161,9 @@ export default function SalesClient() {
     { key: 'model', label: '機種別' },
   ];
 
-  const th = 'px-3 py-2 font-extrabold whitespace-nowrap text-sm';
-  const td = 'px-3 py-2.5 whitespace-nowrap';
+  const th = 'border border-slate-500 px-3 py-2 font-extrabold whitespace-nowrap text-sm';
+  const td = 'border border-slate-300 px-3 py-2.5 whitespace-nowrap';
+  const columns = view === 'supplier' ? 7 : view === 'model' ? 4 : 6;
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col md:flex-row">
@@ -238,17 +238,17 @@ export default function SalesClient() {
                 <tr className="bg-slate-800 text-left text-white">
                   <th className={th}>{view === 'customer' ? '得意先' : view === 'supplier' ? '外注先' : '機種'}</th>
                   <th className={`${th} text-right`}>件数</th>
+                  {view === 'supplier' && <th className={th}>利用機種</th>}
                   <th className={`${th} text-right`}>売上</th>
                   <th className={`${th} text-right`}>うち付帯</th>
                   {view !== 'model' && <th className={`${th} text-right`}>外注支払</th>}
                   {view !== 'model' && <th className={`${th} text-right`}>粗利</th>}
-                  <th className={`${th} w-40`}>構成</th>
                 </tr>
               </thead>
               <tbody>
                 {groups.map((g) => {
                   const isOpen = open === g.key;
-                  const value = view === 'supplier' ? g.cost : g.sales;
+                  const models = [...new Set(g.rows.map((row) => (row.requested_model || '').trim() || '機種未入力'))];
                   return (
                     <React.Fragment key={g.key}>
                       <tr
@@ -260,6 +260,9 @@ export default function SalesClient() {
                           {g.unpriced > 0 && <span className="ml-2 text-xs font-bold text-rose-700">単価未入力 {g.unpriced}件</span>}
                         </td>
                         <td className={`${td} text-right font-bold`}>{g.rows.length}</td>
+                        {view === 'supplier' && (
+                          <td className="border border-slate-300 px-3 py-2.5 text-sm font-bold whitespace-normal">{models.join('、')}</td>
+                        )}
                         <td className={`${td} text-right font-black`}>{money(g.sales)}</td>
                         <td className={`${td} text-right font-bold`}>{g.extra ? money(g.extra) : '—'}</td>
                         {view !== 'model' && (
@@ -271,11 +274,6 @@ export default function SalesClient() {
                         {view !== 'model' && (
                           <td className={`${td} text-right font-black`}>{g.cost || view === 'supplier' ? money(g.sales - g.cost) : '—'}</td>
                         )}
-                        <td className="px-3 py-2.5">
-                          <div className="h-3 rounded bg-slate-200">
-                            <div className="h-3 rounded bg-teal-700" style={{ width: `${Math.max(2, (value / maxValue) * 100)}%` }} />
-                          </div>
-                        </td>
                       </tr>
                       {isOpen &&
                         g.rows.map((r) => {
@@ -283,19 +281,22 @@ export default function SalesClient() {
                           const hasSup = Boolean((r.supplier_name || '').trim());
                           const cost = r.purchase_amount != null ? Number(r.purchase_amount) : null;
                           return (
-                            <tr key={r.id} className="border-t border-slate-100 bg-slate-50 text-sm">
-                              <td className="py-2 pl-9 pr-3">
+                            <tr key={r.id} className="bg-slate-50 text-sm">
+                              <td className="border border-slate-300 py-2 pl-8 pr-3">
                                 <div className="font-bold">
                                   {formatJapaneseMonthDay(r.work_date)}　{r.site_name || '現場未入力'}
                                 </div>
                                 <div className="text-xs font-bold text-slate-600">
-                                  {[view === 'customer' ? r.requested_model : r.customer_name, view === 'model' ? r.customer_name : '']
-                                    .filter(Boolean)
-                                    .join('　') || '—'}
+                                  {(view === 'supplier' ? r.customer_name : view === 'customer' ? r.requested_model : r.customer_name) || '—'}
                                   {r.extras.length > 0 && `　付帯: ${r.extras.map((e) => `${e.name} ${money(e.amount)}`).join('、')}`}
                                 </div>
                               </td>
-                              <td />
+                              <td className="border border-slate-300" />
+                              {view === 'supplier' && (
+                                <td className="border border-slate-300 px-3 py-2 font-black text-black">
+                                  {(r.requested_model || '').trim() || '機種未入力'}
+                                </td>
+                              )}
                               <td className={`${td} text-right font-bold`}>{unpriced ? '未入力' : money(r.amount)}</td>
                               <td className={`${td} text-right font-bold`}>{r.extraTotal ? money(r.extraTotal) : '—'}</td>
                               {view !== 'model' && (
@@ -313,7 +314,6 @@ export default function SalesClient() {
                               {view !== 'model' && (
                                 <td className={`${td} text-right font-bold`}>{hasSup && cost != null ? money(r.amount - cost) : '—'}</td>
                               )}
-                              <td />
                             </tr>
                           );
                         })}                    </React.Fragment>
@@ -321,7 +321,7 @@ export default function SalesClient() {
                 })}
                 {!loading && groups.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-6 text-sm font-bold text-slate-600">
+                    <td colSpan={columns} className="border border-slate-300 px-4 py-6 text-sm font-bold text-slate-600">
                       この月のデータはありません。
                     </td>
                   </tr>
@@ -332,13 +332,13 @@ export default function SalesClient() {
                   <tr className="border-t-4 border-slate-800 bg-slate-50 font-black">
                     <td className={td}>合計</td>
                     <td className={`${td} text-right`}>{groups.reduce((s, g) => s + g.rows.length, 0)}</td>
+                    {view === 'supplier' && <td className={td} />}
                     <td className={`${td} text-right`}>{money(groups.reduce((s, g) => s + g.sales, 0))}</td>
                     <td className={`${td} text-right`}>{money(groups.reduce((s, g) => s + g.extra, 0))}</td>
                     {view !== 'model' && <td className={`${td} text-right`}>{money(groups.reduce((s, g) => s + g.cost, 0))}</td>}
                     {view !== 'model' && (
                       <td className={`${td} text-right`}>{money(groups.reduce((s, g) => s + g.sales - g.cost, 0))}</td>
                     )}
-                    <td />
                   </tr>
                 </tfoot>
               )}
