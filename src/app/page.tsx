@@ -738,15 +738,26 @@ export default function CraneProApp() {
   }, [contacts, customers]);
   const isOwnOperator = (name: string) =>
     operators.some((op) => String(op.name || '').trim() && String(op.name).trim() === String(name || '').trim());
-  const registerSite = (row: DispatchRecord) => {
+  const findSite = (row: DispatchRecord) =>
+    sites.find((site) => row.site_code && site.code === row.site_code) ||
+    sites.find(
+      (site) =>
+        site.name === row.site_name &&
+        (!row.customer_code || !site.customer_code || site.customer_code === row.customer_code)
+    ) ||
+    sites.find((site) => site.name && site.name === row.site_name);
+  const openSiteMaster = (row: DispatchRecord) => {
+    const hit = findSite(row);
     setSiteDraft({
       rowId: row.id,
-      name: row.site_name,
-      customerCode: row.customer_code || '',
-      customerName: row.customer_name || '',
-      entryTime: row.entry_time || '',
+      siteId: hit?.id ? String(hit.id) : undefined,
+      name: hit?.name || row.site_name || '',
+      customerCode: row.customer_code || hit?.customer_code || '',
+      customerName: row.customer_name || hit?.customer_name || '',
+      entryTime: row.entry_time || hit?.default_entry_time || '',
     });
   };
+  const registerSite = (row: DispatchRecord) => openSiteMaster(row);
   const applyCustomer = (row: DispatchRecord, val: string, id?: string) => {
     const hit =
       (id && customers.find((customer) => String(customer.code || customer.id) === id)) ||
@@ -1288,6 +1299,7 @@ export default function CraneProApp() {
                                 commitSite(row, hit?.name || option.value, hit);
                               }}
                               onCreate={() => registerSite(row)}
+                              onFilledClick={() => openSiteMaster(row)}
                               className="w-full h-11 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none"
                             />
                             {addressOf(row) && (
@@ -1518,6 +1530,7 @@ export default function CraneProApp() {
                           commitSite(row, hit?.name || option.value, hit);
                         }}
                         onCreate={() => registerSite(row)}
+                        onFilledClick={() => openSiteMaster(row)}
                         className={fieldClass}
                       />
                     </label>
@@ -1681,11 +1694,13 @@ export default function CraneProApp() {
           onClose={() => setSiteDraft(null)}
           onCreated={(site) => {
             setSites((current) =>
-              [...current, site].sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'))
+              [...current.filter((item) => item.id !== site.id), { ...(current.find((item) => item.id === site.id) || {}), ...site }]
+                .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'))
             );
             handleUpdateField(siteDraft.rowId, {
               site_code: site.code,
               site_name: site.name,
+              ...(site.address ? { site_address: site.address } : {}),
               ...(site.customer_name ? { customer_name: site.customer_name } : {}),
               ...(site.customer_code ? { customer_code: site.customer_code } : {}),
               ...(site.default_entry_time ? { entry_time: toHalfwidthTime(site.default_entry_time) } : {}),
@@ -1699,12 +1714,13 @@ export default function CraneProApp() {
                     ...current,
                     site_code: site.code,
                     site_name: site.name,
+                    ...(site.address ? { site_address: site.address } : {}),
                     ...(site.contact_name ? { contact_name: site.contact_name, contact_tel: site.contact_tel } : {}),
                   }
                 : current
             );
             setSiteDraft(null);
-            showToast(`現場コード ${site.code} を登録しました`);
+            showToast(siteDraft.siteId ? `現場コード ${site.code} を保存しました` : `現場コード ${site.code} を登録しました`);
           }}
         />
       )}
@@ -2048,6 +2064,7 @@ export default function CraneProApp() {
                         )}
                         onChange={(val) => setSelectedJob({ ...selectedJob, site_name: val })}
                         onCreate={() => registerSite(selectedJob)}
+                        onFilledClick={() => openSiteMaster(selectedJob)}
                         onPick={(option) => {
                           const hit = sites.find((site) => site.id === option.id);
                           setSelectedJob({

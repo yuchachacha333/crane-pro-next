@@ -17,6 +17,7 @@ type SuggestInputProps = {
   onChange: (value: string) => void;
   onPick: (option: SuggestOption) => void;
   onCreate?: () => void;
+  onFilledClick?: () => void;
   className?: string;
   title?: string;
 };
@@ -28,6 +29,7 @@ export default function SuggestInput({
   onChange,
   onPick,
   onCreate,
+  onFilledClick,
   className,
   title,
 }: SuggestInputProps) {
@@ -80,7 +82,10 @@ export default function SuggestInput({
           readOnly
           value={value}
           placeholder={placeholder || 'タップして選ぶ'}
-          onClick={() => setSheet(true)}
+          onClick={() => {
+            if (value.trim() && onFilledClick) onFilledClick();
+            else setSheet(true);
+          }}
           className={`${className || ''} cursor-pointer`}
         />
         {sheet && (
@@ -113,7 +118,13 @@ export default function SuggestInput({
         value={value}
         placeholder={placeholder}
         autoComplete="off"
+        onMouseDown={(event) => {
+          if (!value.trim() || !onFilledClick) return;
+          event.preventDefault();
+          onFilledClick();
+        }}
         onFocus={() => {
+          if (value.trim() && onFilledClick) return;
           placeList();
           setOpen(true);
         }}

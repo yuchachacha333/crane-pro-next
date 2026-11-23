@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabase';
 
 export type SiteDraft = {
   rowId: string;
+  siteId?: string;
   name: string;
   customerCode: string;
   customerName: string;
@@ -27,6 +28,7 @@ type Props = {
     default_entry_time: string;
     contact_name: string;
     contact_tel: string;
+    address: string;
   }) => void;
 };
 
@@ -42,8 +44,34 @@ export default function SiteRegisterDialog({ companyId, draft, onClose, onCreate
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  const editing = Boolean(draft.siteId);
   useEffect(() => {
     let cancelled = false;
+    if (draft.siteId) {
+      supabase
+        .from('sites')
+        .select('code, name, postal_code, address, tel, contact_name, contact_tel, default_entry_time')
+        .eq('id', draft.siteId)
+        .single()
+        .then(({ data, error: loadError }) => {
+          if (cancelled) return;
+          if (loadError || !data) {
+            setError(loadError?.message || '現場マスタを読めません');
+            return;
+          }
+          setCode(String(data.code || ''));
+          setName(String(data.name || draft.name));
+          setPostal(String(data.postal_code || ''));
+          setAddress(String(data.address || ''));
+          setTel(String(data.tel || ''));
+          setContactName(String(data.contact_name || ''));
+          setContactTel(String(data.contact_tel || ''));
+          setEntryTime(String(data.default_entry_time || draft.entryTime || ''));
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
     nextMasterCode('sites', companyId)
       .then((next) => {
         if (!cancelled) setCode(next);
@@ -54,7 +82,7 @@ export default function SiteRegisterDialog({ companyId, draft, onClose, onCreate
     return () => {
       cancelled = true;
     };
-  }, [companyId]);
+  }, [companyId, draft.siteId, draft.name, draft.entryTime]);
 
   async function fillAddress() {
     const found = await lookupPostal({ zip: postal });
@@ -80,7 +108,7 @@ export default function SiteRegisterDialog({ companyId, draft, onClose, onCreate
     }
     setSaving(true);
     setError('');
-    const siteCode = code || (await nextMasterCode('sites', companyId));
+    const siteCode = editing ? code : code || (await nextMasterCode('sites', companyId));
     const payload = {
       company_id: companyId,
       code: siteCode,
@@ -94,7 +122,10 @@ export default function SiteRegisterDialog({ companyId, draft, onClose, onCreate
       contact_tel: contactTel.trim() || null,
       default_entry_time: toHalfwidthTime(entryTime.trim()) || null,
     };
-    const { data, error: saveError } = await supabase.from('sites').insert(payload).select('id, code, name').single();
+    const query = editing
+      ? supabase.from('sites').update(payload).eq('id', draft.siteId).select('id, code, name').single()
+      : supabase.from('sites').insert(payload).select('id, code, name').single();
+    const { data, error: saveError } = await query;
     setSaving(false);
     if (saveError || !data) {
       setError(saveError?.message || '現場を保存できません');
@@ -109,6 +140,7 @@ export default function SiteRegisterDialog({ companyId, draft, onClose, onCreate
       default_entry_time: entryTime.trim(),
       contact_name: contactName.trim(),
       contact_tel: contactTel.trim(),
+      address: address.trim(),
     });
   }
 
@@ -121,9 +153,9 @@ export default function SiteRegisterDialog({ companyId, draft, onClose, onCreate
           void save();
         }}
       >
-        <h2 className="text-xl font-extrabold">現場マスタに登録</h2>
+        <h2 className="text-xl font-extrabold">{editing ? '現場マスタを編集' : '現場マスタに登録'}</h2>
         <p className="mt-1 text-sm font-bold text-slate-500">
-          現場コードは {code || '採番中...'} です。いまある番号の次を自動で付けます。
+          {editing ? `現場コード ${code || '...'}` : `現場コードは ${code || '採番中...'} です。いまある番号の次を自動で付けます。`}
         </p>
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label className="sm:col-span-2 block text-xs font-extrabold text-slate-600">
@@ -178,7 +210,7 @@ export default function SiteRegisterDialog({ companyId, draft, onClose, onCreate
             キャンセル
           </button>
           <button type="submit" disabled={saving} className="h-10 px-4 rounded-xl bg-[#121826] text-white font-extrabold text-sm disabled:opacity-50">
-            {saving ? '保存中...' : '登録して配車に入れる'}
+            {saving ? '保存中...' : editing ? '保存する' : '登録して配車に入れる'}
           </button>
         </div>
       </form>
