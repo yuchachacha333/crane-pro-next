@@ -5,13 +5,16 @@ export function closeKeyOf(value: unknown): string {
   if (!text) return '';
   if (text.includes('末')) return 'end';
   const number = Number(text);
-  if (!Number.isFinite(number) || number <= 0) return '';
+  if (!Number.isFinite(number) || number < 0) return '';
+  if (number === 0) return '00';
   if (number >= 28) return 'end';
   return String(Math.round(number));
 }
 
 export function closeLabel(key: string): string {
-  return key === 'end' ? '末日締め' : `${key}日締め`;
+  if (key === 'end') return '末日締め';
+  if (key === '00') return '00日締め';
+  return `${key}日締め`;
 }
 
 function lastDay(year: number, month: number): number {
@@ -28,6 +31,14 @@ export function billingPeriod(closeKey: string, iso: string): { start: string; e
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
+  // 00日締めは、選んだ月の1日から末日まで（住友林業など締日0の得意先）
+  if (closeKey === '00') {
+    const end = lastDay(year, month);
+    return {
+      start: `${match[1]}-${match[2]}-01`,
+      end: `${match[1]}-${match[2]}-${String(end).padStart(2, '0')}`,
+    };
+  }
   const closeDay = (y: number, m: number) =>
     closeKey === 'end' ? lastDay(y, m) : Math.min(Number(closeKey), lastDay(y, m));
 
