@@ -22,6 +22,7 @@ export type PrintJob = {
   contact_name: string;
   contact_tel: string;
   notes: string;
+  request_notes?: string;
   is_cancelled: boolean;
 };
 
@@ -169,7 +170,7 @@ function siteAddress(job: PrintJob, sites: SiteHit[]) {
   return hit?.address || '';
 }
 
-function formValues(job: PrintJob, sites: SiteHit[]) {
+function formValues(job: PrintJob, sites: SiteHit[], kind?: PrintKind) {
   let machine = job.requested_model || '';
   if (!machine && job.assigned_product && job.assigned_product !== '庸車') machine = job.assigned_product;
   return {
@@ -182,7 +183,7 @@ function formValues(job: PrintJob, sites: SiteHit[]) {
     現場住所: siteAddress(job, sites),
     担当者: String(job.contact_name || '').replace(/様$/, '').trim(),
     携帯電話: job.contact_tel || '',
-    備考: job.notes || '',
+    備考: kind === 'request' ? job.request_notes || '' : job.notes || '',
     庸車: job.supplier_name || '',
   };
 }
@@ -218,15 +219,17 @@ function FormPage({
   sites = [],
   raw = false,
   clip = false,
+  kind,
 }: {
   layout: SheetLayout;
   job?: PrintJob;
   sites?: SiteHit[];
   raw?: boolean;
   clip?: boolean;
+  kind?: PrintKind;
 }) {
   const scale = Number(layout.scale) || 100;
-  const values = raw || !job ? {} : formValues(job, sites);
+  const values = raw || !job ? {} : formValues(job, sites, kind);
   const today = raw ? '' : createdLabel(getTodayIso());
   const at: Record<number, number> = {};
   layout.rows.forEach((row, index) => {
@@ -788,7 +791,7 @@ export default function PrintPreview({
         )}
         {layout &&
           kind !== 'board' &&
-          pages.map((job) => <FormPage key={job.id} layout={layout} job={job} sites={sites} />)}
+          pages.map((job) => <FormPage key={job.id} layout={layout} job={job} sites={sites} kind={kind} />)}
         </FitPages>
       </div>
     </div>

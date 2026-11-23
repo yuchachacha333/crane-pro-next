@@ -61,6 +61,7 @@ interface DispatchRecord {
   unit_price: number | null;
   total_sales_amount: number | null;
   notes: string;
+  request_notes?: string;
   supplier_code: string;
   supplier_name: string;
   is_dispatched: boolean;
@@ -573,11 +574,29 @@ export default function CraneProApp() {
       );
     }
 
+    let requestNoteError = '';
+    if (!error) {
+      const noteSave = await supabase
+        .from('dispatches')
+        .update({ request_notes: selectedJob.request_notes || '' })
+        .eq('id', selectedJob.id);
+      if (noteSave.error && /request_notes/i.test(noteSave.error.message)) {
+        if ((selectedJob.request_notes || '').trim()) {
+          requestNoteError = '配車依頼書の備考を保存するには、Supabaseで supabase/dispatch_request_notes.sql を実行してください';
+        }
+      } else if (noteSave.error) {
+        requestNoteError = noteSave.error.message;
+      }
+    }
+
     setSavingJob(false);
     if (error) {
       showToast('保存エラー: ' + error.message);
     } else if (purchaseError) {
       showToast(purchaseError);
+      fetchDispatches();
+    } else if (requestNoteError) {
+      showToast(requestNoteError);
       fetchDispatches();
     } else if (supplierContactError) {
       showToast(supplierContactError);
@@ -2152,6 +2171,16 @@ export default function CraneProApp() {
                           setSelectedJob({ ...selectedJob, contact_tel: e.target.value })
                         }
                         className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold"
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-bold text-slate-600 mb-1">配車依頼書の備考</label>
+                      <textarea
+                        rows={3}
+                        value={selectedJob.request_notes || ''}
+                        placeholder="配車依頼書の備考欄に印刷されます"
+                        onChange={(e) => setSelectedJob({ ...selectedJob, request_notes: e.target.value })}
+                        className="w-full p-3 rounded-xl border border-slate-300 font-bold"
                       />
                     </div>
                     <div className="md:col-span-2">
