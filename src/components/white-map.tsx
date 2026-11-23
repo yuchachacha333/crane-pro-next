@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { buildMapWord, downloadMapWord, FRAME_H_MM, FRAME_W_MM, shareFileOrSave } from '@/lib/map-word';
+import { buildMapPdfFile, downloadMapWord, FRAME_H_MM, FRAME_W_MM, shareFile } from '@/lib/map-word';
 
 type Props = {
   address: string;
@@ -173,6 +173,7 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
   const [phone, setPhone] = useState(false);
   const [layoutReady, setLayoutReady] = useState(false);
   const [view, setView] = useState<View | null>(null);
+  const [shareReady, setShareReady] = useState<File | null>(null);
 
   const filePart = (value: string) => value.replace(/[\\/:*?"<>|\r\n]/g, ' ').replace(/\s+/g, ' ').trim();
   const fileBase = [date || '日付なし', filePart(siteName) || '現場', filePart(address)].filter(Boolean).join('_');
@@ -248,14 +249,67 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
     return () => observer.disconnect();
   }, [phone, src]);
 
-  async function sharePdf() {
-    if (!pdfHref || saving) return;
-    setSaving(true);
-    setStatus('PDFを作っています');
-    try {
+  async function mapPng() {
+    const sheet = frameRef.current;
+    if (!sheet || !point || !view) throw new Error('map');
+    const frameBox = sheet.getBoundingClientRect();
+    const logicalW = Math.min(1280, Math.max(200, Math.round(frameBox.width)));
+    const logicalH = Math.max(200, Math.round((logicalW * FRAME_H_MM) / FRAME_W_MM));
+    const zoom = view.zoom + Math.log2(logicalW / frameBox.width);
+    const params = new URLSearchParams({
+      lat: String(view.lat),
+      lng: String(view.lng),
+      zoom: String(zoom),
+      w: String(logicalW),
+      h: String(logicalH),
+      plat: String(point.lat),
+      plng: String(point.lng),
+    });
+    const response = await fetch(`/api/map-image?${params}`);
+    if (!response.ok) throw new Error('map');
+    return response.blob();
+  }
+
+  async function makeShareFile() {
+    if (phone) {
+      if (!pdfHref) throw new Error('pdf');
       const response = await fetch(pdfHref);
       if (!response.ok) throw new Error('pdf');
-      await shareFileOrSave(await response.blob(), `${fileBase}.pdf`, 'application/pdf');
+      return new File([await response.blob()], `${fileBase}.pdf`, { type: 'application/pdf' });
+    }
+    return buildMapPdfFile(await mapPng(), fileBase);
+  }
+
+  // 配車表の共有と同じく、共有を押す前にPDFを用意しておく（押した瞬間に共有画面を開くため）
+  useEffect(() => {
+    if (!layoutReady) return;
+    if (phone ? !pdfHref : !view || !point || frame.width <= 0) return;
+    let cancelled = false;
+    setShareReady(null);
+    const timer = window.setTimeout(() => {
+      makeShareFile()
+        .then((file) => {
+          if (!cancelled) setShareReady(file);
+        })
+        .catch(() => undefined);
+    }, 700);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layoutReady, phone, pdfHref, view, point, frame.width, fileBase]);
+
+  async function shareMap() {
+    if (saving) return;
+    try {
+      if (shareReady) {
+        await shareFile(shareReady);
+        return;
+      }
+      setSaving(true);
+      setStatus('共有用のPDFを作っています');
+      await shareFile(await makeShareFile());
       setStatus(place || address);
     } catch {
       setStatus('共有できませんでした');
@@ -264,41 +318,15 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
     }
   }
 
-  async function saveMap(share = false) {
-    const sheet = frameRef.current;
-    const map = mapRef.current;
-    if (!sheet || !map || !point || !view || saving) return;
+  async function saveMap() {
+    if (saving) return;
     setSaving(true);
     setStatus('印刷用の地図を作っています');
     try {
-      const frameBox = sheet.getBoundingClientRect();
-      const logicalW = Math.min(1280, Math.max(200, Math.round(frameBox.width)));
-      const logicalH = Math.max(200, Math.round((logicalW * FRAME_H_MM) / FRAME_W_MM));
-      const zoom = view.zoom + Math.log2(logicalW / frameBox.width);
-      const params = new URLSearchParams({
-        lat: String(view.lat),
-        lng: String(view.lng),
-        zoom: String(zoom),
-        w: String(logicalW),
-        h: String(logicalH),
-        plat: String(point.lat),
-        plng: String(point.lng),
-      });
-      const response = await fetch(`/api/map-image?${params}`);
-      if (!response.ok) throw new Error('map');
-      const blob = await response.blob();
-      if (share) {
-        await shareFileOrSave(
-          await buildMapWord(blob, fileBase),
-          `${fileBase}.docx`,
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        );
-      } else {
-        await downloadMapWord(blob, fileBase);
-      }
+      await downloadMapWord(await mapPng(), fileBase);
       setStatus(place || address);
     } catch {
-      setStatus(share ? '共有できませんでした' : 'ワードに出力できませんでした');
+      setStatus('ワードに出力できませんでした');
     } finally {
       setSaving(false);
     }
@@ -329,7 +357,7 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
             </button>
             <button
               type="button"
-              onClick={() => void saveMap(true)}
+              onClick={() => void shareMap()}
               disabled={!view || saving}
               className="h-10 rounded-xl border-2 border-slate-700 bg-white px-3 font-black text-black disabled:opacity-40"
             >
@@ -384,7 +412,7 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
           </a>
           <button
             type="button"
-            onClick={() => void sharePdf()}
+            onClick={() => void shareMap()}
             disabled={!pdfHref || saving}
             className="h-12 rounded-xl border-2 border-slate-700 bg-white px-4 font-black text-black disabled:opacity-40"
           >

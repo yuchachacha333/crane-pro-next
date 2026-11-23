@@ -70,18 +70,26 @@ export async function downloadMapWord(png: Blob, fileBase: string) {
   saveBlob(await buildMapWord(png, fileBase), `${fileBase}.docx`);
 }
 
-export async function shareFileOrSave(blob: Blob, name: string, type: string) {
-  const file = new File([blob], name, { type });
-  if (navigator.canShare?.({ files: [file] })) {
+/** A4横の1ページPDF（配車表の共有と同じPDF形式）。共有を押す前に作っておく */
+export async function buildMapPdfFile(png: Blob, fileBase: string) {
+  const { jsPDF } = await import('jspdf');
+  const pdf = new jsPDF({ orientation: 'l', unit: 'mm', format: 'a4' });
+  pdf.setProperties({ title: fileBase, author: ' ', creator: ' ', subject: ' ' });
+  pdf.addImage(await blobToDataUrl(png), 'PNG', MARGIN_MM, MARGIN_MM, FRAME_W_MM, FRAME_H_MM, undefined, 'NONE');
+  return new File([pdf.output('blob')], `${fileBase}.pdf`, { type: 'application/pdf' });
+}
+
+/** 配車表の共有と同じ動き：共有画面を開き、使えない環境ではダウンロードする */
+export async function shareFile(file: File) {
+  if (navigator.share) {
     try {
-      await navigator.share({ files: [file], title: name });
+      await navigator.share({ files: [file], title: file.name.replace(/\.pdf$/i, '') });
+      return;
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
-      throw error;
     }
-    return;
   }
-  saveBlob(blob, name);
+  saveBlob(file, file.name);
 }
 
 export async function downloadMapImage(png: Blob, fileBase: string) {
