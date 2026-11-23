@@ -479,7 +479,7 @@ export default function BillingClient() {
       sumitomo: {
         contact: pickContact(site.jobs) || (contactNames[group.code] || [])[0] || '',
         quoteNo: `${month}-${String(index + 1).padStart(2, '0')}`,
-        jobCode: [site.name !== '現場未入力' ? site.name : '', site.jobCode].filter(Boolean).join('　'),
+        jobCode: site.jobCode,
         lines,
       },
     });

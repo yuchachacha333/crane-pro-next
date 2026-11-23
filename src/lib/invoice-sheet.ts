@@ -191,10 +191,8 @@ export function fillInvoiceLayout(
     for (const cell of row.cells) {
       if (moneyText(cell.text) || cell.formula) {
         cell.text = `¥${comma(value)}`;
-        if (kind !== 'bill') {
-          cell.align = 'right';
-          cell.wrap = false;
-        }
+        cell.align = 'right';
+        cell.wrap = false;
         cell.bold = true;
         cell.formula = false;
       }
