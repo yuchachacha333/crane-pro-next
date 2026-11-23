@@ -2,16 +2,25 @@
 
 import { useEffect, useState } from 'react';
 import { createSheetFile, FitPages, LayoutSheet, printSheetPages, shareSheetPages } from '@/components/print-preview';
-import { fillInvoiceLayout, type InvoiceCustomer, type InvoiceLine } from '@/lib/invoice-sheet';
+import {
+  fillInvoiceLayout,
+  fillSumitomoLayout,
+  type InvoiceCustomer,
+  type InvoiceLine,
+  type SumitomoHead,
+  type SumitomoLine,
+} from '@/lib/invoice-sheet';
 import type { SheetLayout } from '@/lib/sheet-layout';
 
 export default function InvoicePreview({
   customer,
   lines,
+  sumitomo,
   onClose,
 }: {
   customer: InvoiceCustomer;
   lines: InvoiceLine[];
+  sumitomo?: { contact: string; quoteNo: string; jobCode: string; lines: SumitomoLine[] };
   onClose: () => void;
 }) {
   const [layout, setLayout] = useState<SheetLayout | null>(null);
@@ -19,16 +28,36 @@ export default function InvoicePreview({
   const [error, setError] = useState('');
   const [shareFile, setShareFile] = useState<File | null>(null);
 
-  const requestKey = JSON.stringify({ customer, lines });
+  const requestKey = JSON.stringify({ customer, lines, sumitomo });
 
   useEffect(() => {
     let cancelled = false;
-    const request = JSON.parse(requestKey) as { customer: InvoiceCustomer; lines: InvoiceLine[] };
-    fetch(`/api/print/layout?file=${encodeURIComponent('自社請求書.xlsx')}`)
+    const request = JSON.parse(requestKey) as {
+      customer: InvoiceCustomer;
+      lines: InvoiceLine[];
+      sumitomo?: { contact: string; quoteNo: string; jobCode: string; lines: SumitomoLine[] };
+    };
+    const file = request.sumitomo ? '住友林業ホームエンジニアリング請求書.xlsx' : '自社請求書.xlsx';
+    fetch(`/api/print/layout?file=${encodeURIComponent(file)}`)
       .then(async (response) => {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || '請求書のひな形を読めませんでした');
         if (cancelled) return;
+        if (request.sumitomo) {
+          const now = new Date();
+          const head: SumitomoHead = {
+            postal: request.customer.postal,
+            address: request.customer.address,
+            contact: request.sumitomo.contact,
+            quoteNo: request.sumitomo.quoteNo,
+            jobCode: request.sumitomo.jobCode,
+            issueDate: `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`,
+          };
+          const filled = fillSumitomoLayout(body.layout as SheetLayout, request.sumitomo.lines, head);
+          setLayout(filled.layout);
+          setNote(filled.omitted ? `${filled.omitted}件は欄が足りず印字していません。合計は全件です。` : filled.warning);
+          return;
+        }
         const filled = fillInvoiceLayout(body.layout as SheetLayout, request.lines, request.customer);
         setLayout(filled.layout);
         setNote(filled.omitted ? `${filled.omitted}件は欄が足りず印字していません。合計は全件です。` : filled.warning);
@@ -59,7 +88,10 @@ export default function InvoicePreview({
   return (
     <div className="fixed inset-0 z-[60] overflow-auto bg-slate-300">
       <div className="no-print sticky top-0 z-10 flex items-center justify-between gap-3 bg-slate-900 px-4 py-3 text-white">
-        <div className="font-extrabold">請求書　{customer.name}</div>
+        <div className="font-extrabold">
+          請求書　{customer.name}
+          {sumitomo ? `　No. ${sumitomo.quoteNo}` : ''}
+        </div>
         <div className="flex items-center gap-2">
           <button
             type="button"

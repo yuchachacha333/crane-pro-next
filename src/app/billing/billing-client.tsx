@@ -6,7 +6,7 @@ import AppSidebar from '@/components/app-sidebar';
 import InvoicePreview from '@/components/invoice-preview';
 import { billingPeriod, closeKeyOf, closeLabel } from '@/lib/billing';
 import { formatJapaneseMonthDay, getTodayIso } from '@/lib/crane-utils';
-import type { InvoiceLine } from '@/lib/invoice-sheet';
+import { isSumitomoCustomer, type InvoiceLine, type SumitomoLine } from '@/lib/invoice-sheet';
 import { getDefaultCompanyId, supabase } from '@/lib/supabase';
 
 type Customer = {
@@ -24,6 +24,7 @@ type Job = {
   customer_name: string | null;
   site_name: string | null;
   client_job_code?: string | null;
+  contact_name?: string | null;
   requested_model: string | null;
   operator_name: string | null;
   supplier_name: string | null;
@@ -38,7 +39,7 @@ type Job = {
 
 type ExtraRow = { name: string; quantity: number; unit: string; unit_price: number; amount: number };
 type BillJob = Job & { amount: number; missing: boolean; base: number | null; extraLines: ExtraRow[]; extraTotal: number };
-type SiteGroup = { name: string; amount: number; jobs: BillJob[] };
+type SiteGroup = { name: string; jobCode: string; amount: number; jobs: BillJob[] };
 type Group = {
   code: string;
   name: string;
@@ -77,7 +78,13 @@ export default function BillingClient() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [extras, setExtras] = useState<Record<string, ExtraRow[]>>({});
   const [detail, setDetail] = useState<{ code: string; mode: 'flat' | 'site' } | null>(null);
-  const [invoice, setInvoice] = useState<{ name: string; postal: string; address: string; lines: InvoiceLine[] } | null>(null);
+  const [invoice, setInvoice] = useState<{
+    name: string;
+    postal: string;
+    address: string;
+    lines: InvoiceLine[];
+    sumitomo?: { contact: string; quoteNo: string; jobCode: string; lines: SumitomoLine[] };
+  } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -147,7 +154,7 @@ export default function BillingClient() {
     let cancelled = false;
     setLoading(true);
     const columns =
-      'id, work_date, customer_code, customer_name, site_name, client_job_code, requested_model, operator_name, supplier_name, unit_price, total_sales_amount, notes, is_cancelled, start_time, end_time, work_hours';
+      'id, work_date, customer_code, customer_name, site_name, client_job_code, contact_name, requested_model, operator_name, supplier_name, unit_price, total_sales_amount, notes, is_cancelled, start_time, end_time, work_hours';
     const loadJobs = (fields: string) =>
       supabase
         .from('dispatches')
@@ -156,8 +163,17 @@ export default function BillingClient() {
         .gte('work_date', nextPeriod.start)
         .lte('work_date', nextPeriod.end);
     loadJobs(columns).then(async (first) => {
-      const fallback = first.error && /client_job_code/i.test(first.error.message) ? await loadJobs(columns.replace(', client_job_code', '')) : first;
-      const { data, error: queryError } = fallback;
+      let result = first;
+      let fields = columns;
+      if (result.error && /client_job_code/i.test(result.error.message)) {
+        fields = fields.replace(', client_job_code', '');
+        result = await loadJobs(fields);
+      }
+      if (result.error && /contact_name/i.test(result.error.message)) {
+        fields = fields.replace(', contact_name', '');
+        result = await loadJobs(fields);
+      }
+      const { data, error: queryError } = result;
         if (cancelled) return;
         if (queryError) {
           setLoading(false);
@@ -242,15 +258,21 @@ export default function BillingClient() {
       bucket.set(code, current);
     }
     const list = [...bucket.values()].map((group) => {
+      const byJobCode = isSumitomoCustomer(group.code);
       const sites = new Map<string, SiteGroup>();
       for (const job of group.jobs) {
+        const jobCode = String(job.client_job_code || '').trim();
         const name = job.site_name || '現場未入力';
-        const site = sites.get(name) ?? { name, amount: 0, jobs: [] };
+        const key = byJobCode ? jobCode || `未入力:${name}` : name;
+        const site = sites.get(key) ?? { name, jobCode: byJobCode ? jobCode : '', amount: 0, jobs: [] };
+        if (byJobCode && name && !site.name.split('、').includes(name)) {
+          site.name = site.jobs.length ? `${site.name}、${name}` : name;
+        }
         site.jobs.push(job);
         site.amount += job.amount;
-        sites.set(name, site);
+        sites.set(key, site);
       }
-      group.sites = [...sites.values()].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
+      group.sites = [...sites.values()].sort((a, b) => (a.jobCode || a.name).localeCompare(b.jobCode || b.name, 'ja'));
       group.jobs.sort((a, b) => a.work_date.localeCompare(b.work_date) || (a.site_name || '').localeCompare(b.site_name || '', 'ja'));
       return group;
     });
@@ -311,8 +333,75 @@ export default function BillingClient() {
     });
   }
 
+  function shownDay(value: string) {
+    const parts = String(value || '').match(/^\d{4}-(\d{2})-(\d{2})/);
+    return parts ? `${Number(parts[1])}/${Number(parts[2])}` : value;
+  }
+
+  function postalOf(value: string | null | undefined) {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    return text.startsWith('〒') ? text : `〒${text}`;
+  }
+
+  function pickContact(jobs: BillJob[]) {
+    const counts = new Map<string, { n: number; date: string }>();
+    for (const job of jobs) {
+      const name = String(job.contact_name || '').replace(/様$/, '').trim();
+      if (!name) continue;
+      const current = counts.get(name) ?? { n: 0, date: '' };
+      current.n += 1;
+      if (job.work_date > current.date) current.date = job.work_date;
+      counts.set(name, current);
+    }
+    return [...counts.entries()].sort((a, b) => b[1].n - a[1].n || b[1].date.localeCompare(a[1].date))[0]?.[0] || '';
+  }
+
+  function openSumitomo(group: Group, site: SiteGroup, index: number) {
+    const party = customers.find((customer) => customer.code === group.code);
+    const month = (anchor || '').slice(0, 7).replace('-', '');
+    const lines: SumitomoLine[] = site.jobs.flatMap((job) => {
+      const unpriced = job.base == null;
+      const main: SumitomoLine = {
+        machine: job.requested_model || '',
+        date: shownDay(job.work_date),
+        site: job.site_name || '',
+        qty: unpriced ? '' : 1,
+        unit: unpriced ? '' : '式',
+        price: unpriced ? '' : job.base ?? '',
+        amount: unpriced ? '' : job.base ?? '',
+        note: unpriced ? '単価未入力' : '',
+      };
+      const extras: SumitomoLine[] = job.extraLines.map((line) => ({
+        machine: line.name,
+        date: '',
+        site: '',
+        qty: line.quantity,
+        unit: line.unit || '',
+        price: line.unit_price,
+        amount: line.amount,
+        note: '',
+      }));
+      return [main, ...extras];
+    });
+    setInvoice({
+      name: group.name,
+      postal: postalOf(party?.postal_code),
+      address: [party?.address1, party?.address2].filter(Boolean).join(' '),
+      lines: [],
+      sumitomo: {
+        contact: pickContact(site.jobs),
+        quoteNo: `${month}-${String(index + 1).padStart(2, '0')}`,
+        jobCode: site.jobCode,
+        lines,
+      },
+    });
+  }
+
   // 請求明細の1件分（本体の行＋付帯売上の行）
   function siteHeading(site: SiteGroup) {
+    if (site.jobCode) return `工事コード ${site.jobCode}　${site.name}`;
+    if (isSumitomoCustomer(detail?.code || '')) return `工事コード未入力　${site.name}`;
     const codes = [...new Set(site.jobs.map((job) => String(job.client_job_code || '').trim()).filter(Boolean))];
     return codes.length ? `現場：${site.name}　${codes.join('、')}` : `現場：${site.name}`;
   }
@@ -381,7 +470,7 @@ export default function BillingClient() {
             <input
               type="month"
               value={anchor.slice(0, 7)}
-              onChange={(event) => event.target.value && setAnchor(`-01`)}
+              onChange={(event) => event.target.value && setAnchor(`${event.target.value}-01`)}
               className="h-14 min-w-52 rounded-2xl border-2 border-slate-400 bg-white px-4 text-xl font-black text-black"
             />
             <select
@@ -419,18 +508,22 @@ export default function BillingClient() {
               <button type="button" onClick={() => setDetail(null)} className="h-9 px-3 rounded-lg border border-slate-300 text-sm font-extrabold">
                 得意先一覧
               </button>
-              <button
-                type="button"
-                onClick={() => openInvoice(selected)}
-                className="h-9 px-3 rounded-lg bg-teal-700 text-white text-sm font-extrabold"
-              >
-                請求書を印刷
-              </button>
+              {isSumitomoCustomer(selected.code) ? (
+                <p className="text-xs font-bold text-slate-600">工事コードごとの「この工事の請求書」から印刷します。</p>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => openInvoice(selected)}
+                  className="h-9 px-3 rounded-lg bg-teal-700 text-white text-sm font-extrabold"
+                >
+                  請求書を印刷
+                </button>
+              )}
             </div>
             <div className="px-4 py-3">
               <h2 className="text-xl font-extrabold">{selected.name}</h2>
               <p className="text-sm font-bold text-slate-500">
-                {detail?.mode === 'site' ? '現場別請求明細' : '請求明細'}　{selected.jobs.length}件　{amountLabel(selected)}
+                {isSumitomoCustomer(selected.code) ? '工事コード別の請求' : detail?.mode === 'site' ? '現場別請求明細' : '請求明細'}　{selected.jobs.length}件　{amountLabel(selected)}
               </p>
             </div>
             <div className="overflow-x-auto">
@@ -449,11 +542,20 @@ export default function BillingClient() {
                 </thead>
                 <tbody>
                   {detail?.mode === 'site'
-                    ? selected.sites.map((site) => (
-                        <React.Fragment key={site.name}>
+                    ? selected.sites.map((site, index) => (
+                        <React.Fragment key={`${site.jobCode}:${site.name}:${index}`}>
                           <tr className="border-t-2 border-slate-300 bg-slate-100">
                             <td colSpan={8} className="px-3 py-2 font-black">
                               {siteHeading(site)}
+                              {isSumitomoCustomer(selected.code) && (
+                                <button
+                                  type="button"
+                                  onClick={() => openSumitomo(selected, site, index)}
+                                  className="ml-3 h-8 rounded-lg bg-teal-700 px-3 text-xs font-extrabold text-white"
+                                >
+                                  この工事の請求書
+                                </button>
+                              )}
                             </td>
                             <td className="px-3 py-2 text-right whitespace-nowrap font-black">小計 {money(site.amount)}</td>
                             <td className="sticky right-0 bg-slate-100" />
@@ -484,10 +586,10 @@ export default function BillingClient() {
               <section key={group.code} className="bg-white border border-slate-200 rounded-2xl shadow-sm flex flex-wrap items-center gap-3 px-4 py-3">
                 <button
                   type="button"
-                  onClick={() => setDetail({ code: group.code, mode: 'flat' })}
+                  onClick={() => setDetail({ code: group.code, mode: isSumitomoCustomer(group.code) ? 'site' : 'flat' })}
                   className="h-9 px-3 rounded-lg bg-[#121826] text-white text-sm font-extrabold"
                 >
-                  請求明細
+                  {isSumitomoCustomer(group.code) ? '工事別の請求' : '請求明細'}
                 </button>
                 <div className="flex-1 min-w-40">
                   <div className="font-extrabold">{group.name}</div>
@@ -495,13 +597,15 @@ export default function BillingClient() {
                     {group.jobs.length}件　{amountLabel(group)}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setDetail({ code: group.code, mode: 'site' })}
-                  className="h-9 px-3 rounded-lg border border-slate-300 text-sm font-extrabold"
-                >
-                  現場別請求明細
-                </button>
+                {!isSumitomoCustomer(group.code) && (
+                  <button
+                    type="button"
+                    onClick={() => setDetail({ code: group.code, mode: 'site' })}
+                    className="h-9 px-3 rounded-lg border border-slate-300 text-sm font-extrabold"
+                  >
+                    現場別請求明細
+                  </button>
+                )}
               </section>
             ))}
           </div>
@@ -516,6 +620,7 @@ export default function BillingClient() {
         <InvoicePreview
           customer={{ name: invoice.name, postal: invoice.postal, address: invoice.address }}
           lines={invoice.lines}
+          sumitomo={invoice.sumitomo}
           onClose={() => setInvoice(null)}
         />
       )}

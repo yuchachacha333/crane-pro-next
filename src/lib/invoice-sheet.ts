@@ -189,3 +189,171 @@ export function fillInvoiceLayout(
   }
   return { layout, omitted: Math.max(0, lines.length - slots.length), warning: '' };
 }
+
+export const SUMITOMO_CUSTOMER_CODES = ['0204', '0232', '0488'];
+
+export function isSumitomoCustomer(code: string) {
+  const value = String(code || '').trim();
+  if (!value) return false;
+  return SUMITOMO_CUSTOMER_CODES.some((item) => item === value || (Number(item) === Number(value) && /^\d+$/.test(value)));
+}
+
+export type SumitomoLine = {
+  machine: string;
+  date: string;
+  site: string;
+  qty: number | '';
+  unit: string;
+  price: number | '';
+  amount: number | '';
+  note: string;
+};
+
+export type SumitomoHead = {
+  postal: string;
+  address: string;
+  contact: string;
+  quoteNo: string;
+  jobCode: string;
+  issueDate: string;
+};
+
+function moneyOf(value: number | '') {
+  if (value === '' || value == null) return '';
+  const amount = Number(value);
+  return Number.isFinite(amount) ? comma(amount) : '';
+}
+
+export function fillSumitomoLayout(source: SheetLayout, lines: SumitomoLine[], head: SumitomoHead) {
+  const layout = JSON.parse(JSON.stringify(source)) as SheetLayout;
+  const slots: { index: number; machineCol: number; dateCol: number; qtyCol: number; siteIndex: number; siteCol: number }[] = [];
+  layout.rows.forEach((row, index) => {
+    const machineCol = row.cells.findIndex((cell) => cell.text.includes('【機種】'));
+    if (machineCol < 0) return;
+    const siteRow = layout.rows[index + 1];
+    slots.push({
+      index,
+      machineCol,
+      dateCol: row.cells.findIndex((cell) => cell.text.includes('【作業日】')),
+      qtyCol: row.cells.findIndex((cell) => cell.text.includes('【数量】')),
+      siteIndex: index + 1,
+      siteCol: siteRow ? siteRow.cells.findIndex((cell) => cell.text.includes('【現場名】')) : -1,
+    });
+  });
+  let unitCol = -1;
+  let priceCol = -1;
+  let amountCol = -1;
+  let noteCol = -1;
+  for (const row of layout.rows) {
+    row.cells.forEach((cell, col) => {
+      if (cell.text.includes('【')) return;
+      const key = plain(cell.text);
+      if (key === '単位') unitCol = col;
+      else if (key === '単価') priceCol = col;
+      else if (key === '金額') amountCol = col;
+      else if (key === '備考') noteCol = col;
+    });
+  }
+  const write = (rowIndex: number, col: number, text: string) => {
+    const cell = col < 0 ? undefined : layout.rows[rowIndex]?.cells[col];
+    if (!cell) return;
+    cell.text = text;
+    cell.formula = false;
+  };
+  slots.forEach((slot, index) => {
+    const line = lines[index];
+    write(slot.index, slot.machineCol, line?.machine || '');
+    write(slot.index, slot.dateCol, line?.date || '');
+    write(slot.index, slot.qtyCol, line && line.qty !== '' ? String(line.qty) : '');
+    write(slot.siteIndex, slot.siteCol, line?.site || '');
+    write(slot.index, unitCol, line?.unit || '');
+    write(slot.index, priceCol, line ? moneyOf(line.price) : '');
+    write(slot.index, amountCol, line ? moneyOf(line.amount) : '');
+    write(slot.index, noteCol, line?.note || '');
+  });
+  for (const row of layout.rows) {
+    for (const cell of row.cells) {
+      if (!cell.text.includes('【')) continue;
+      const contact = head.contact.trim();
+      cell.text = cell.text
+        .replaceAll('【郵便番号】', head.postal)
+        .replaceAll('【住所】', head.address)
+        .replaceAll('【担当者】様', contact ? `${contact}様` : '')
+        .replaceAll('【担当者】', contact)
+        .replaceAll('【見積番号】', head.quoteNo)
+        .replaceAll('【工事番号】', head.jobCode);
+      cell.formula = false;
+    }
+  }
+  for (const row of layout.rows.slice(0, 8)) {
+    for (const cell of row.cells) {
+      if (cell.formula && /^\d{4,6}$/.test(String(cell.text || '').trim())) {
+        cell.text = head.issueDate;
+        cell.formula = false;
+      }
+    }
+  }
+  let net = 0;
+  let qtySum = 0;
+  for (const line of lines) {
+    if (line.amount !== '') {
+      const amount = Number(line.amount);
+      if (Number.isFinite(amount)) net += amount;
+    }
+    if (line.qty !== '') {
+      const qty = Number(line.qty);
+      if (Number.isFinite(qty)) qtySum += qty;
+    }
+  }
+  net = Math.round(net);
+  const tax = Math.round(net * 0.1);
+  const firstLine = slots[0]?.index ?? layout.rows.length;
+  const yen: SheetCell[] = [];
+  const zeros: SheetCell[] = [];
+  layout.rows.forEach((row, index) => {
+    if (index >= firstLine) return;
+    for (const cell of row.cells) {
+      if (!cell.formula) continue;
+      if (/^\\0-?$/.test(cell.text)) yen.push(cell);
+      else if (cell.text === '0') zeros.push(cell);
+    }
+  });
+  if (yen[0]) {
+    yen[0].text = `\\${comma(net)}-`;
+    yen[0].formula = false;
+  }
+  if (yen[1]) {
+    yen[1].text = `\\${comma(tax)}-`;
+    yen[1].formula = false;
+  }
+  if (zeros[0]) {
+    zeros[0].text = comma(net);
+    zeros[0].formula = false;
+  }
+  if (zeros[1]) {
+    zeros[1].text = comma(tax);
+    zeros[1].formula = false;
+  }
+  const qtyCol = slots[0]?.qtyCol ?? -1;
+  for (let index = layout.rows.length - 1; index >= 0; index -= 1) {
+    const amountCell = amountCol < 0 ? undefined : layout.rows[index].cells[amountCol];
+    if (amountCell?.formula) {
+      amountCell.text = comma(net);
+      amountCell.formula = false;
+      break;
+    }
+  }
+  for (let index = layout.rows.length - 1; index >= 0; index -= 1) {
+    const qtyCell = qtyCol < 0 ? undefined : layout.rows[index].cells[qtyCol];
+    if (qtyCell?.formula) {
+      qtyCell.text = String(qtySum);
+      qtyCell.formula = false;
+      break;
+    }
+  }
+  return {
+    layout,
+    omitted: Math.max(0, lines.length - slots.length),
+    warning: slots.length ? '' : '明細の欄が見つかりません',
+  };
+}

@@ -46,7 +46,13 @@ export type SheetLayout = {
   merges: { r: number; c: number; rows: number; cols: number }[];
 };
 
-const FILES = new Set(['配車表.xlsx', '作業指示書.xlsx', '配車依頼書.xlsx', '自社請求書.xlsx']);
+const FILES = new Set([
+  '配車表.xlsx',
+  '作業指示書.xlsx',
+  '配車依頼書.xlsx',
+  '自社請求書.xlsx',
+  '住友林業ホームエンジニアリング請求書.xlsx',
+]);
 
 function attr(tag: string, name: string) {
   const match = String(tag || '').match(new RegExp(name + '="([^"]*)"'));
