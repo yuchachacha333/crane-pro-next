@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { downloadMapWord, FRAME_H_MM, FRAME_W_MM } from '@/lib/map-word';
+import { buildMapWord, downloadMapWord, FRAME_H_MM, FRAME_W_MM, shareFileOrSave } from '@/lib/map-word';
 
 type Props = {
   address: string;
@@ -248,7 +248,23 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
     return () => observer.disconnect();
   }, [phone, src]);
 
-  async function saveMap() {
+  async function sharePdf() {
+    if (!pdfHref || saving) return;
+    setSaving(true);
+    setStatus('PDFを作っています');
+    try {
+      const response = await fetch(pdfHref);
+      if (!response.ok) throw new Error('pdf');
+      await shareFileOrSave(await response.blob(), `${fileBase}.pdf`, 'application/pdf');
+      setStatus(place || address);
+    } catch {
+      setStatus('共有できませんでした');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveMap(share = false) {
     const sheet = frameRef.current;
     const map = mapRef.current;
     if (!sheet || !map || !point || !view || saving) return;
@@ -271,10 +287,18 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
       const response = await fetch(`/api/map-image?${params}`);
       if (!response.ok) throw new Error('map');
       const blob = await response.blob();
-      await downloadMapWord(blob, fileBase);
+      if (share) {
+        await shareFileOrSave(
+          await buildMapWord(blob, fileBase),
+          `${fileBase}.docx`,
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        );
+      } else {
+        await downloadMapWord(blob, fileBase);
+      }
       setStatus(place || address);
     } catch {
-      setStatus('ワードに出力できませんでした');
+      setStatus(share ? '共有できませんでした' : 'ワードに出力できませんでした');
     } finally {
       setSaving(false);
     }
@@ -302,6 +326,14 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
               className="h-10 rounded-xl bg-slate-900 px-3 font-bold text-white disabled:opacity-40"
             >
               ワードに出力
+            </button>
+            <button
+              type="button"
+              onClick={() => void saveMap(true)}
+              disabled={!view || saving}
+              className="h-10 rounded-xl border-2 border-slate-700 bg-white px-3 font-black text-black disabled:opacity-40"
+            >
+              共有
             </button>
             <button type="button" onClick={onClose} className="h-10 rounded-xl border-2 border-slate-700 px-3 font-black text-black">
               閉じる
@@ -350,6 +382,14 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
           >
             PDFに出力
           </a>
+          <button
+            type="button"
+            onClick={() => void sharePdf()}
+            disabled={!pdfHref || saving}
+            className="h-12 rounded-xl border-2 border-slate-700 bg-white px-4 font-black text-black disabled:opacity-40"
+          >
+            共有
+          </button>
           <button type="button" onClick={onClose} className="h-12 rounded-xl border-2 border-slate-700 px-4 font-black text-black">
             閉じる
           </button>

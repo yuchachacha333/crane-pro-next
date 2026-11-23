@@ -5,7 +5,7 @@ const MARGIN_MM = 5;
 export const FRAME_W_MM = PAGE_W_MM - MARGIN_MM * 2;
 export const FRAME_H_MM = PAGE_H_MM - MARGIN_MM * 2;
 
-export async function downloadMapWord(png: Blob, fileBase: string) {
+export async function buildMapWord(png: Blob, fileBase: string) {
   const {
     convertMillimetersToTwip,
     Document,
@@ -63,7 +63,25 @@ export async function downloadMapWord(png: Blob, fileBase: string) {
       },
     ],
   });
-  saveBlob(await Packer.toBlob(doc), `${fileBase}.docx`);
+  return Packer.toBlob(doc);
+}
+
+export async function downloadMapWord(png: Blob, fileBase: string) {
+  saveBlob(await buildMapWord(png, fileBase), `${fileBase}.docx`);
+}
+
+export async function shareFileOrSave(blob: Blob, name: string, type: string) {
+  const file = new File([blob], name, { type });
+  if (navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: name });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      throw error;
+    }
+    return;
+  }
+  saveBlob(blob, name);
 }
 
 export async function downloadMapImage(png: Blob, fileBase: string) {
