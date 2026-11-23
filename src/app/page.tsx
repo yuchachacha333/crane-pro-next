@@ -50,6 +50,7 @@ interface DispatchRecord {
   customer_name: string;
   site_code: string;
   site_name: string;
+  client_job_code?: string;
   requested_model: string;
   assigned_product: string;
   operator_code: string;
@@ -98,6 +99,21 @@ type ContactPerson = {
   name: string;
   tel: string;
 };
+
+function guestCodeOf(site?: { client_site_code?: string; construction_no?: string } | null) {
+  return String(site?.client_site_code || site?.construction_no || '').trim();
+}
+
+function siteGuestPatch(
+  row: { site_code?: string; client_job_code?: string },
+  site?: { code?: string; client_site_code?: string; construction_no?: string } | null
+) {
+  const fromSite = guestCodeOf(site);
+  const switched = Boolean(site?.code) && site?.code !== (row.site_code || '');
+  if (switched) return { client_job_code: fromSite };
+  if (fromSite && !String(row.client_job_code || '').trim()) return { client_job_code: fromSite };
+  return {};
+}
 
 function isUnassigned(row: Pick<DispatchRecord, 'operator_name' | 'supplier_name' | 'is_cancelled'>) {
   return !row.is_cancelled && !row.operator_name?.trim() && !row.supplier_name?.trim();
@@ -357,9 +373,11 @@ export default function CraneProApp() {
     const { error } = await supabase.from('dispatches').update(nextPatch).eq('id', id);
     if (error) {
       showToast(
-        /supplier_contact/i.test(error.message)
-          ? '庸車の担当者を保存するには、Supabaseで supabase/dispatch_supplier_contact.sql を実行してください'
-          : '保存エラー: ' + error.message
+        /client_job_code/i.test(error.message)
+          ? '工事コードを保存するには、Supabaseで supabase/dispatch_client_job_code.sql を実行してください'
+          : /supplier_contact/i.test(error.message)
+            ? '庸車の担当者を保存するには、Supabaseで supabase/dispatch_supplier_contact.sql を実行してください'
+            : '保存エラー: ' + error.message
       );
     }
   };
@@ -574,6 +592,21 @@ export default function CraneProApp() {
       );
     }
 
+    let clientJobError = '';
+    if (!error) {
+      const codeSave = await supabase
+        .from('dispatches')
+        .update({ client_job_code: selectedJob.client_job_code || '' })
+        .eq('id', selectedJob.id);
+      if (codeSave.error && /client_job_code/i.test(codeSave.error.message)) {
+        if ((selectedJob.client_job_code || '').trim()) {
+          clientJobError = '工事コードを保存するには、Supabaseで supabase/dispatch_client_job_code.sql を実行してください';
+        }
+      } else if (codeSave.error) {
+        clientJobError = codeSave.error.message;
+      }
+    }
+
     let requestNoteError = '';
     if (!error) {
       const noteSave = await supabase
@@ -597,6 +630,9 @@ export default function CraneProApp() {
       fetchDispatches();
     } else if (requestNoteError) {
       showToast(requestNoteError);
+      fetchDispatches();
+    } else if (clientJobError) {
+      showToast(clientJobError);
       fetchDispatches();
     } else if (supplierContactError) {
       showToast(supplierContactError);
@@ -755,6 +791,7 @@ export default function CraneProApp() {
       customerCode: row.customer_code || hit?.customer_code || '',
       customerName: row.customer_name || hit?.customer_name || '',
       entryTime: row.entry_time || hit?.default_entry_time || '',
+      guestCode: row.client_job_code || guestCodeOf(hit),
     });
   };
   const registerSite = (row: DispatchRecord) => openSiteMaster(row);
@@ -779,6 +816,7 @@ export default function CraneProApp() {
         ? {
             site_code: '',
             site_name: '',
+            client_job_code: '',
             contact_code: only?.code || '',
             contact_name: only?.name || '',
             contact_tel: only?.tel || '',
@@ -824,6 +862,7 @@ export default function CraneProApp() {
             ...(site.contact_name
               ? { contact_name: site.contact_name, contact_tel: site.contact_tel || '', contact_code: '' }
               : {}),
+            ...siteGuestPatch(row, site),
           }
         : value
           ? { site_code: '' }
@@ -1147,7 +1186,10 @@ export default function CraneProApp() {
                     <th className="p-2.5 border-r border-slate-200 w-32">オペレーター</th>
                     <th className="p-2.5 border-r border-slate-200 w-40">庸車（仕入先）</th>
                     <th className="p-2.5 border-r border-slate-200 w-44">得意先</th>
-                    <th className="p-2.5 border-r border-slate-200 w-48">現場名</th>
+                    <th className="p-2.5 border-r border-slate-200 w-52">
+                      現場名
+                      <span className="mt-0.5 block font-bold text-slate-500">工事コード</span>
+                    </th>
                     <th className="p-2.5 border-r border-slate-200 w-32">受付機種</th>
                     <th className="p-2.5 border-r border-slate-200 w-16 text-center">昼夜</th>
                     <th className="p-2.5 border-r border-slate-200 w-20">入場</th>
@@ -1280,44 +1322,67 @@ export default function CraneProApp() {
 
                         {/* 現場名 */}
                         <td className="p-0 border-r border-slate-200">
-                          <div className="flex items-center">
-                            <SuggestInput
-                              value={row.site_name || ''}
-                              placeholder="現場名"
-                              title="現場を選ぶ"
-                              options={siteChoices(row.customer_code || '', row.customer_name || '', row.site_name || '')}
-                              onChange={(val) => {
-                                const hit = sites.find(
-                                  (site) =>
-                                    site.name === val &&
-                                    (!row.customer_code || !site.customer_code || site.customer_code === row.customer_code)
-                                );
-                                commitSite(row, val, hit);
-                              }}
-                              onPick={(option) => {
-                                const hit = sites.find((site) => site.id === option.id);
-                                commitSite(row, hit?.name || option.value, hit);
-                              }}
-                              onCreate={() => registerSite(row)}
-                              onFilledClick={() => openSiteMaster(row)}
-                              className="w-full h-11 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none"
-                            />
-                            {addressOf(row) && (
-                              <div className="shrink-0 flex flex-col border-l border-slate-200">
-                                <button
-                                  type="button"
-                                  onClick={() => openMap(row)}
-                                  className="h-6 px-2 text-[11px] font-extrabold text-slate-700 hover:bg-slate-100"
-                                >
-                                  地図
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => openNearby(row)}
-                                  className="h-6 px-2 text-[11px] font-extrabold text-teal-800 hover:bg-teal-50"
-                                >
-                                  探す
-                                </button>
+                          <div className="flex items-stretch">
+                            <div className="min-w-0 flex-1">
+                              <SuggestInput
+                                value={row.site_name || ''}
+                                placeholder="現場名"
+                                title="現場を選ぶ"
+                                options={siteChoices(row.customer_code || '', row.customer_name || '', row.site_name || '')}
+                                onChange={(val) => {
+                                  const hit = sites.find(
+                                    (site) =>
+                                      site.name === val &&
+                                      (!row.customer_code || !site.customer_code || site.customer_code === row.customer_code)
+                                  );
+                                  commitSite(row, val, hit);
+                                }}
+                                onPick={(option) => {
+                                  const hit = sites.find((site) => site.id === option.id);
+                                  commitSite(row, hit?.name || option.value, hit);
+                                }}
+                                onCreate={() => registerSite(row)}
+                                className="w-full h-8 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none"
+                              />
+                              <input
+                                type="text"
+                                value={row.client_job_code || ''}
+                                placeholder="工事コード"
+                                title="請求書に載せる客先の現場コード・工事コード。マスタの現場コードとは別です。"
+                                onChange={(e) => handleUpdateField(row.id, { client_job_code: e.target.value })}
+                                className="w-full h-7 border-t border-slate-200 bg-amber-50/80 px-2.5 text-[11px] font-bold text-slate-700 outline-none focus:bg-white"
+                              />
+                            </div>
+                            {(row.site_name?.trim() || addressOf(row)) && (
+                              <div className="flex shrink-0 flex-col border-l border-slate-200">
+                                {row.site_name?.trim() && (
+                                  <button
+                                    type="button"
+                                    onClick={() => openSiteMaster(row)}
+                                    title="現場マスタを開く"
+                                    className="h-7 px-1.5 text-[10px] font-extrabold text-teal-800 hover:bg-teal-50"
+                                  >
+                                    マスタ
+                                  </button>
+                                )}
+                                {addressOf(row) && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => openMap(row)}
+                                      className="h-6 px-1.5 text-[11px] font-extrabold text-slate-700 hover:bg-slate-100"
+                                    >
+                                      地図
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => openNearby(row)}
+                                      className="h-6 px-1.5 text-[11px] font-extrabold text-teal-800 hover:bg-teal-50"
+                                    >
+                                      探す
+                                    </button>
+                                  </>
+                                )}
                               </div>
                             )}
                           </div>
@@ -1472,6 +1537,9 @@ export default function CraneProApp() {
                   {editingId !== row.id && (
                     <div>
                       <div className="font-extrabold text-lg text-slate-900">{row.site_name || '（現場名未入力）'}</div>
+                      {row.client_job_code?.trim() && (
+                        <div className="text-xs font-black text-slate-500">工事コード {row.client_job_code}</div>
+                      )}
                       {siteAddress && <div className="text-sm font-bold text-slate-800 mt-0.5">{siteAddress}</div>}
                       <div className="text-sm font-bold text-slate-600 mt-0.5">{row.customer_name || '（得意先未入力）'}</div>
                       {row.contact_name && (
@@ -1530,10 +1598,29 @@ export default function CraneProApp() {
                           commitSite(row, hit?.name || option.value, hit);
                         }}
                         onCreate={() => registerSite(row)}
-                        onFilledClick={() => openSiteMaster(row)}
                         className={fieldClass}
                       />
                     </label>
+                    <label className="block">
+                      <span className="text-[11px] font-extrabold text-slate-500">工事コード（請求書）</span>
+                      <input
+                        type="text"
+                        value={row.client_job_code || ''}
+                        placeholder="客先の現場コード・工事コード"
+                        title="マスタの現場コードとは別です。請求書の現場名の下に出ます。"
+                        onChange={(e) => handleUpdateField(row.id, { client_job_code: e.target.value })}
+                        className={fieldClass}
+                      />
+                    </label>
+                    {row.site_name?.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => openSiteMaster(row)}
+                        className="h-10 rounded-xl border border-teal-700 px-3 text-xs font-extrabold text-teal-800"
+                      >
+                        現場マスタを開く
+                      </button>
+                    )}
                     {contactChooser(row, (patch) => handleUpdateField(row.id, patch), fieldClass)}
                     <div className="grid grid-cols-2 gap-2">
                       <label className="block">
@@ -1700,6 +1787,7 @@ export default function CraneProApp() {
             handleUpdateField(siteDraft.rowId, {
               site_code: site.code,
               site_name: site.name,
+              client_job_code: site.client_site_code || '',
               ...(site.address ? { site_address: site.address } : {}),
               ...(site.customer_name ? { customer_name: site.customer_name } : {}),
               ...(site.customer_code ? { customer_code: site.customer_code } : {}),
@@ -1714,6 +1802,7 @@ export default function CraneProApp() {
                     ...current,
                     site_code: site.code,
                     site_name: site.name,
+                    client_job_code: site.client_site_code || '',
                     ...(site.address ? { site_address: site.address } : {}),
                     ...(site.contact_name ? { contact_name: site.contact_name, contact_tel: site.contact_tel } : {}),
                   }
@@ -2064,7 +2153,6 @@ export default function CraneProApp() {
                         )}
                         onChange={(val) => setSelectedJob({ ...selectedJob, site_name: val })}
                         onCreate={() => registerSite(selectedJob)}
-                        onFilledClick={() => openSiteMaster(selectedJob)}
                         onPick={(option) => {
                           const hit = sites.find((site) => site.id === option.id);
                           setSelectedJob({
@@ -2076,29 +2164,33 @@ export default function CraneProApp() {
                                   ...(hit.customer_name ? { customer_name: hit.customer_name } : {}),
                                   ...(hit.customer_code ? { customer_code: hit.customer_code } : {}),
                                   ...(hit.address ? { site_address: hit.address } : {}),
+                                  ...siteGuestPatch(selectedJob, hit),
                                 }
                               : {}),
                           });
                         }}
                         className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold"
                       />
-                      {selectedJob.site_name && !sites.some((site) => site.name === selectedJob.site_name) && (
+                      {selectedJob.site_name?.trim() && (
                         <button
                           type="button"
-                          onClick={() =>
-                            setSiteDraft({
-                              rowId: selectedJob.id,
-                              name: selectedJob.site_name,
-                              customerCode: selectedJob.customer_code || '',
-                              customerName: selectedJob.customer_name || '',
-                              entryTime: selectedJob.entry_time || '',
-                            })
-                          }
+                          onClick={() => openSiteMaster(selectedJob)}
                           className="mt-2 h-9 px-3 rounded-lg bg-teal-50 text-teal-900 text-xs font-extrabold"
                         >
-                          この現場をマスタに登録
+                          現場マスタを開く
                         </button>
                       )}
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-1">工事コード（請求書）</label>
+                      <input
+                        type="text"
+                        value={selectedJob.client_job_code || ''}
+                        placeholder="客先の現場コード・工事コード"
+                        title="マスタの現場コードとは別です。東栄住宅・住友林業・群峰アクシアなどの請求書に出します。"
+                        onChange={(e) => setSelectedJob({ ...selectedJob, client_job_code: e.target.value })}
+                        className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold"
+                      />
                     </div>
                     <div>
                       <label className="block text-xs font-bold text-slate-600 mb-1">現場住所</label>

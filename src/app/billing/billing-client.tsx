@@ -23,6 +23,7 @@ type Job = {
   customer_code: string | null;
   customer_name: string | null;
   site_name: string | null;
+  client_job_code?: string | null;
   requested_model: string | null;
   operator_name: string | null;
   supplier_name: string | null;
@@ -145,15 +146,18 @@ export default function BillingClient() {
     if (!nextPeriod) return;
     let cancelled = false;
     setLoading(true);
-    supabase
-      .from('dispatches')
-      .select(
-        'id, work_date, customer_code, customer_name, site_name, requested_model, operator_name, supplier_name, unit_price, total_sales_amount, notes, is_cancelled, start_time, end_time, work_hours'
-      )
-      .eq('company_id', companyId)
-      .gte('work_date', nextPeriod.start)
-      .lte('work_date', nextPeriod.end)
-      .then(async ({ data, error: queryError }) => {
+    const columns =
+      'id, work_date, customer_code, customer_name, site_name, client_job_code, requested_model, operator_name, supplier_name, unit_price, total_sales_amount, notes, is_cancelled, start_time, end_time, work_hours';
+    const loadJobs = (fields: string) =>
+      supabase
+        .from('dispatches')
+        .select(fields)
+        .eq('company_id', companyId)
+        .gte('work_date', nextPeriod.start)
+        .lte('work_date', nextPeriod.end);
+    loadJobs(columns).then(async (first) => {
+      const fallback = first.error && /client_job_code/i.test(first.error.message) ? await loadJobs(columns.replace(', client_job_code', '')) : first;
+      const { data, error: queryError } = fallback;
         if (cancelled) return;
         if (queryError) {
           setLoading(false);
@@ -162,7 +166,7 @@ export default function BillingClient() {
           setError(queryError.message);
           return;
         }
-        const rows = (data ?? []) as Job[];
+        const rows = (data ?? []) as unknown as Job[];
         const extraMap: Record<string, ExtraRow[]> = {};
         const ids = rows.map((row) => row.id);
         for (let index = 0; index < ids.length; index += 100) {
@@ -267,7 +271,8 @@ export default function BillingClient() {
     const lines: InvoiceLine[] = group.jobs.flatMap((job) => {
       const parts = String(job.work_date || '').match(/^\d{4}-(\d{2})-(\d{2})/);
       const shown = parts ? `${Number(parts[1])}/${Number(parts[2])}` : job.work_date;
-      const site = job.site_name || '現場未入力';
+      const code = String(job.client_job_code || '').trim();
+      const site = code ? `${job.site_name || '現場未入力'}\n${code}` : job.site_name || '現場未入力';
       const unpriced = job.base == null;
       const main: InvoiceLine = {
         date: shown,
@@ -307,6 +312,11 @@ export default function BillingClient() {
   }
 
   // 請求明細の1件分（本体の行＋付帯売上の行）
+  function siteHeading(site: SiteGroup) {
+    const codes = [...new Set(site.jobs.map((job) => String(job.client_job_code || '').trim()).filter(Boolean))];
+    return codes.length ? `現場：${site.name}　${codes.join('、')}` : `現場：${site.name}`;
+  }
+
   function jobRows(job: BillJob) {
     const hours = job.work_hours == null ? '—' : `${job.work_hours}`;
     const back = `/billing?anchor=${anchor}&close=${close}&code=${encodeURIComponent(detail?.code ?? '')}&mode=${detail?.mode ?? 'flat'}`;
@@ -320,7 +330,10 @@ export default function BillingClient() {
         <td className="px-3 py-3 font-bold">式</td>
         <td className="px-3 py-3 text-right font-bold">{hours}</td>
         <td className="px-3 py-3 text-right whitespace-nowrap font-bold">{job.base == null ? '未入力' : money(job.base)}</td>
-        <td className="px-3 py-3 font-bold">{job.site_name || '現場未入力'}</td>
+        <td className="px-3 py-3 font-bold">
+          <div>{job.site_name || '現場未入力'}</div>
+          {job.client_job_code?.trim() ? <div className="text-[11px] font-black text-slate-500">{job.client_job_code}</div> : null}
+        </td>
         <td className="px-3 py-3 text-right whitespace-nowrap font-black">{job.base == null ? '単価未入力' : money(job.base)}</td>
         <td className="sticky right-0 bg-white px-2 py-2 text-center shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.25)]">
           <a
@@ -440,7 +453,7 @@ export default function BillingClient() {
                         <React.Fragment key={site.name}>
                           <tr className="border-t-2 border-slate-300 bg-slate-100">
                             <td colSpan={8} className="px-3 py-2 font-black">
-                              現場：{site.name}
+                              {siteHeading(site)}
                             </td>
                             <td className="px-3 py-2 text-right whitespace-nowrap font-black">小計 {money(site.amount)}</td>
                             <td className="sticky right-0 bg-slate-100" />

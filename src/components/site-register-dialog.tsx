@@ -13,6 +13,7 @@ export type SiteDraft = {
   customerCode: string;
   customerName: string;
   entryTime: string;
+  guestCode?: string;
 };
 
 type Props = {
@@ -29,6 +30,7 @@ type Props = {
     contact_name: string;
     contact_tel: string;
     address: string;
+    client_site_code: string;
   }) => void;
 };
 
@@ -41,6 +43,7 @@ export default function SiteRegisterDialog({ companyId, draft, onClose, onCreate
   const [contactName, setContactName] = useState('');
   const [contactTel, setContactTel] = useState('');
   const [entryTime, setEntryTime] = useState(draft.entryTime);
+  const [guestCode, setGuestCode] = useState(draft.guestCode || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -50,7 +53,7 @@ export default function SiteRegisterDialog({ companyId, draft, onClose, onCreate
     if (draft.siteId) {
       supabase
         .from('sites')
-        .select('code, name, postal_code, address, tel, contact_name, contact_tel, default_entry_time')
+        .select('code, name, postal_code, address, tel, contact_name, contact_tel, default_entry_time, client_site_code, construction_no')
         .eq('id', draft.siteId)
         .single()
         .then(({ data, error: loadError }) => {
@@ -67,6 +70,7 @@ export default function SiteRegisterDialog({ companyId, draft, onClose, onCreate
           setContactName(String(data.contact_name || ''));
           setContactTel(String(data.contact_tel || ''));
           setEntryTime(String(data.default_entry_time || draft.entryTime || ''));
+          setGuestCode(String(data.client_site_code || data.construction_no || draft.guestCode || ''));
         });
       return () => {
         cancelled = true;
@@ -121,6 +125,8 @@ export default function SiteRegisterDialog({ companyId, draft, onClose, onCreate
       contact_name: contactName.trim() || null,
       contact_tel: contactTel.trim() || null,
       default_entry_time: toHalfwidthTime(entryTime.trim()) || null,
+      client_site_code: guestCode.trim() || null,
+      construction_no: guestCode.trim() || null,
     };
     const query = editing
       ? supabase.from('sites').update(payload).eq('id', draft.siteId).select('id, code, name').single()
@@ -141,6 +147,7 @@ export default function SiteRegisterDialog({ companyId, draft, onClose, onCreate
       contact_name: contactName.trim(),
       contact_tel: contactTel.trim(),
       address: address.trim(),
+      client_site_code: guestCode.trim(),
     });
   }
 
@@ -161,6 +168,16 @@ export default function SiteRegisterDialog({ companyId, draft, onClose, onCreate
           <label className="sm:col-span-2 block text-xs font-extrabold text-slate-600">
             現場名
             <input value={name} onChange={(event) => setName(event.target.value)} className="mt-1 w-full h-10 rounded-xl border border-slate-300 px-3 font-bold" />
+          </label>
+          <label className="sm:col-span-2 block text-xs font-extrabold text-slate-600">
+            客先の現場コード・工事コード
+            <input
+              value={guestCode}
+              onChange={(event) => setGuestCode(event.target.value)}
+              placeholder="東栄住宅・住友林業・群峰アクシアなどの請求書に載せるコード"
+              className="mt-1 w-full h-10 rounded-xl border border-slate-300 px-3 font-bold"
+            />
+            <span className="mt-1 block font-medium text-slate-400">上の現場コード（自動採番）とは別です。請求書の現場名の下に出ます。</span>
           </label>
           <label className="sm:col-span-2 block text-xs font-extrabold text-slate-600">
             得意先

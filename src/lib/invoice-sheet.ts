@@ -138,6 +138,10 @@ export function fillInvoiceLayout(
       if (!cell) continue;
       const value = line[field];
       cell.text = value == null || value === '' ? '' : field === 'price' || field === 'amount' ? comma(Number(value)) : String(value);
+      if (field === 'site' && cell.text.includes('\n')) {
+        cell.wrap = true;
+        row.height = Math.max(Number(row.height) || 18, 32);
+      }
     }
   });
   // 機種が見切れないよう、現場名の列から幅を分けてもらう（現場名は短くなってよい）
