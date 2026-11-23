@@ -254,21 +254,25 @@ export function fillSumitomoLayout(source: SheetLayout, lines: SumitomoLine[], h
       else if (key === '備考') noteCol = col;
     });
   }
-  const write = (rowIndex: number, col: number, text: string) => {
+  const write = (rowIndex: number, col: number, text: string, align?: string) => {
     const cell = col < 0 ? undefined : layout.rows[rowIndex]?.cells[col];
     if (!cell) return;
     cell.text = text;
     cell.formula = false;
+    if (align) {
+      cell.align = align;
+      if (align === 'right') cell.wrap = false;
+    }
   };
   slots.forEach((slot, index) => {
     const line = lines[index];
     write(slot.index, slot.machineCol, line?.machine || '');
     write(slot.index, slot.dateCol, line?.date || '');
-    write(slot.index, slot.qtyCol, line && line.qty !== '' ? String(line.qty) : '');
+    write(slot.index, slot.qtyCol, line && line.qty !== '' ? String(line.qty) : '', 'right');
     write(slot.siteIndex, slot.siteCol, line?.site || '');
     write(slot.index, unitCol, line?.unit || '');
-    write(slot.index, priceCol, line ? moneyOf(line.price) : '');
-    write(slot.index, amountCol, line ? moneyOf(line.amount) : '');
+    write(slot.index, priceCol, line ? moneyOf(line.price) : '', 'right');
+    write(slot.index, amountCol, line ? moneyOf(line.amount) : '', 'right');
     write(slot.index, noteCol, line?.note || '');
   });
   for (const row of layout.rows) {
@@ -294,15 +298,10 @@ export function fillSumitomoLayout(source: SheetLayout, lines: SumitomoLine[], h
     }
   }
   let net = 0;
-  let qtySum = 0;
   for (const line of lines) {
     if (line.amount !== '') {
       const amount = Number(line.amount);
       if (Number.isFinite(amount)) net += amount;
-    }
-    if (line.qty !== '') {
-      const qty = Number(line.qty);
-      if (Number.isFinite(qty)) qtySum += qty;
     }
   }
   net = Math.round(net);
@@ -318,27 +317,33 @@ export function fillSumitomoLayout(source: SheetLayout, lines: SumitomoLine[], h
       else if (cell.text === '0') zeros.push(cell);
     }
   });
+  const yenText = (value: number) => `¥${comma(value)}`;
   if (yen[0]) {
-    yen[0].text = `\\${comma(net)}-`;
+    yen[0].text = `¥${comma(net)}-`;
+    yen[0].align = 'right';
     yen[0].formula = false;
   }
   if (yen[1]) {
-    yen[1].text = `\\${comma(tax)}-`;
+    yen[1].text = `¥${comma(tax)}-`;
+    yen[1].align = 'right';
     yen[1].formula = false;
   }
   if (zeros[0]) {
-    zeros[0].text = comma(net);
+    zeros[0].text = yenText(net);
+    zeros[0].align = 'right';
     zeros[0].formula = false;
   }
   if (zeros[1]) {
-    zeros[1].text = comma(tax);
+    zeros[1].text = yenText(tax);
+    zeros[1].align = 'right';
     zeros[1].formula = false;
   }
   const qtyCol = slots[0]?.qtyCol ?? -1;
   for (let index = layout.rows.length - 1; index >= 0; index -= 1) {
     const amountCell = amountCol < 0 ? undefined : layout.rows[index].cells[amountCol];
     if (amountCell?.formula) {
-      amountCell.text = comma(net);
+      amountCell.text = yenText(net);
+      amountCell.align = 'right';
       amountCell.formula = false;
       break;
     }
@@ -346,7 +351,7 @@ export function fillSumitomoLayout(source: SheetLayout, lines: SumitomoLine[], h
   for (let index = layout.rows.length - 1; index >= 0; index -= 1) {
     const qtyCell = qtyCol < 0 ? undefined : layout.rows[index].cells[qtyCol];
     if (qtyCell?.formula) {
-      qtyCell.text = String(qtySum);
+      qtyCell.text = '';
       qtyCell.formula = false;
       break;
     }

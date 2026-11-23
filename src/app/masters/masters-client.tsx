@@ -7,7 +7,7 @@ import { getDefaultCompanyId, supabase } from '@/lib/supabase';
 import { lookupPostal } from '@/lib/address-lookup';
 import { geocodeAddress } from '@/lib/geo';
 import { nextMasterCode } from '@/lib/next-code';
-import { MASTER_FORMS, fieldsOf, type MasterDefinition, type MasterField, type MasterTable } from '@/lib/master-forms';
+import { MASTER_FORMS, fieldsOf, masterKey, type MasterDefinition, type MasterField } from '@/lib/master-forms';
 
 type Cell = string | number | boolean | null;
 type Row = Record<string, Cell> & { id: string };
@@ -26,7 +26,7 @@ function sanitizeTerm(value: string): string {
 
 export default function MastersClient() {
   const [companyId, setCompanyId] = useState('');
-  const [table, setTable] = useState<MasterTable>('customers');
+  const [table, setTable] = useState('customers');
   const [query, setQuery] = useState('');
   const [rows, setRows] = useState<Row[]>([]);
   const [total, setTotal] = useState<number | null>(null);
@@ -40,7 +40,7 @@ export default function MastersClient() {
   const [error, setError] = useState('');
 
   const master = useMemo(
-    () => MASTER_FORMS.find((item) => item.table === table) ?? MASTER_FORMS[0],
+    () => MASTER_FORMS.find((item) => masterKey(item) === table) ?? MASTER_FORMS[0],
     [table]
   );
 
@@ -62,16 +62,17 @@ export default function MastersClient() {
     if (!companyId) return;
     let cancelled = false;
     supabase
-      .from(table)
+      .from(master.table)
       .select('id', { count: 'exact', head: true })
       .eq('company_id', companyId)
+      .match(master.match || {})
       .then(({ count }) => {
         if (!cancelled) setTotal(count ?? null);
       });
     return () => {
       cancelled = true;
     };
-  }, [companyId, table]);
+  }, [companyId, master]);
 
   useEffect(() => {
     if (!companyId) return;
@@ -93,7 +94,7 @@ export default function MastersClient() {
     setLoading(true);
     setNeedQuery(false);
     setError('');
-    let request = supabase.from(definition.table).select('*').eq('company_id', cid);
+    let request = supabase.from(definition.table).select('*').eq('company_id', cid).match(definition.match || {});
     if (term) {
       const orFilter = definition.searchColumns.map((column) => `${column}.ilike.%${term}%`).join(',');
       request = request.or(orFilter);
@@ -131,12 +132,12 @@ export default function MastersClient() {
     setError('');
     const auto = fieldsOf(master).find((field) => field.auto);
     if (!auto || !companyId) return;
-    void nextMasterCode(master.table, companyId)
+    void nextMasterCode(master.table, companyId, master.match)
       .then((code) => setDraft((current) => ({ ...current, [auto.key]: code })))
       .catch((err: Error) => setError(err.message || 'コードを作れません'));
   }
 
-  function changeTable(next: MasterTable) {
+  function changeTable(next: string) {
     setTable(next);
     setQuery('');
     setRows([]);
@@ -170,7 +171,7 @@ export default function MastersClient() {
   }
 
   async function lookupCustomer(code: string) {
-    if (!companyId || (table !== 'sites' && table !== 'customer_contacts')) return;
+    if (!companyId || (master.table !== 'sites' && master.table !== 'customer_contacts')) return;
     const trimmed = code.trim();
     if (!trimmed) return;
     const { data } = await supabase
@@ -191,7 +192,7 @@ export default function MastersClient() {
     const autoCode = fieldsOf(master).some((field) => field.key === 'code' && field.auto);
     if (!code && autoCode) {
       try {
-        code = await nextMasterCode(table, companyId);
+        code = await nextMasterCode(master.table, companyId, master.match);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'コードを作れません');
         return;
@@ -221,10 +222,13 @@ export default function MastersClient() {
       }
     }
     payload.code = code;
+    if (master.preset) {
+      for (const [key, value] of Object.entries(master.preset)) payload[key] = value;
+    }
     const address =
-      table === 'customers'
+      master.table === 'customers'
         ? [payload.address1, payload.address2].filter((part) => typeof part === 'string' && part).join(' ')
-        : table === 'sites' && typeof payload.address === 'string'
+        : master.table === 'sites' && typeof payload.address === 'string'
           ? payload.address
           : '';
     if (address.trim().length >= 2) {
@@ -238,8 +242,8 @@ export default function MastersClient() {
     setError('');
     const write = (body: Record<string, string | number | boolean | null>) =>
       selectedId === 'new'
-        ? supabase.from(table).insert(body).select('*').single()
-        : supabase.from(table).update(body).eq('id', selectedId).select('*').single();
+        ? supabase.from(master.table).insert(body).select('*').single()
+        : supabase.from(master.table).update(body).eq('id', selectedId).select('*').single();
     let result = await write(payload);
     if (result.error && /latitude|longitude/.test(result.error.message)) {
       const rest = { ...payload };
@@ -255,7 +259,9 @@ export default function MastersClient() {
           ? '同じコードがすでにあります'
           : /latitude|longitude/.test(saveError.message)
             ? '緯度・経度の列がまだありません。SupabaseのSQLエディタで supabase/customer_coordinates.sql を実行してください'
-            : saveError.message
+            : /unit_name/i.test(saveError.message)
+              ? '単位を保存するには、Supabaseで supabase/machine_model_unit.sql を実行してください'
+              : saveError.message
       );
       return;
     }
@@ -271,7 +277,7 @@ export default function MastersClient() {
     if (!window.confirm(`「${label}」を削除しますか？`)) return;
     setDeleting(true);
     setError('');
-    const { error: deleteError } = await supabase.from(table).delete().eq('id', selectedId);
+    const { error: deleteError } = await supabase.from(master.table).delete().eq('id', selectedId);
     setDeleting(false);
     if (deleteError) {
       setError(
@@ -300,13 +306,13 @@ export default function MastersClient() {
             </p>
           </div>
           <div className="flex flex-wrap rounded-xl bg-white border border-slate-200 p-1">
-            {MASTER_FORMS.map((item) => (
+            {MASTER_FORMS.filter((item) => !item.hidden).map((item) => (
               <button
-                key={item.table}
+                key={masterKey(item)}
                 type="button"
-                onClick={() => changeTable(item.table)}
+                onClick={() => changeTable(masterKey(item))}
                 className={`px-4 py-2 rounded-lg text-sm font-extrabold ${
-                  table === item.table ? 'bg-[#121826] text-white' : 'text-slate-600'
+                  table === masterKey(item) ? 'bg-[#121826] text-white' : 'text-slate-600'
                 }`}
               >
                 {item.title}
@@ -385,7 +391,7 @@ export default function MastersClient() {
             )}
           </section>
 
-          <section className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4">
+          <section className="bg-white border border-slate-200 rounded-2xl shadow-sm p-4 xl:sticky xl:top-4 xl:max-h-[calc(100vh-2rem)] xl:overflow-y-auto">
             {!selectedId ? (
               <p className="text-sm font-bold text-slate-500 py-8 text-center">一覧から選ぶと、ここで内容を修正できます。</p>
             ) : (
@@ -398,7 +404,7 @@ export default function MastersClient() {
                 <h2 className="font-extrabold text-lg mb-3">
                   {selectedId === 'new' ? `${master.title}を追加` : draft.name || master.title}
                 </h2>
-                <div className="space-y-4 max-h-[70vh] overflow-auto pr-1">
+                <div className="space-y-4">
                   {master.groups.map((group) => (
                     <fieldset key={group.name}>
                       <legend className="text-xs font-extrabold text-slate-500 mb-2">{group.name}</legend>

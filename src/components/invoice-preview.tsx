@@ -54,6 +54,7 @@ export default function InvoicePreview({
             issueDate: `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`,
           };
           const filled = fillSumitomoLayout(body.layout as SheetLayout, request.sumitomo.lines, head);
+          filled.layout.center = true;
           setLayout(filled.layout);
           setNote(filled.omitted ? `${filled.omitted}件は欄が足りず印字していません。合計は全件です。` : filled.warning);
           return;

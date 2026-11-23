@@ -109,12 +109,12 @@ function bookCss(cell: SheetCell, scale: number) {
   const align = cell.align === 'center' || cell.align === 'right' ? cell.align : 'left';
   return {
     fontSize: `${(Number(cell.size) * scale) / 100}pt`,
-    fontWeight: cell.bold ? 700 : 400,
+    fontWeight: cell.bold ? 800 : 400,
     textAlign: align as 'left' | 'center' | 'right',
     verticalAlign: valign as 'middle' | 'top' | 'bottom',
     border: cell.border ? '0.75pt solid #000' : '0',
     whiteSpace: cell.wrap ? ('pre-wrap' as const) : ('nowrap' as const),
-    padding: '0.3mm 1mm',
+    padding: '0 0.3mm',
     lineHeight: 1.15,
   };
 }
@@ -188,8 +188,28 @@ function formValues(job: PrintJob, sites: SiteHit[], kind?: PrintKind) {
   };
 }
 
-function SheetSpill({ cell, text }: { cell: SheetCell; text: string }) {
-  if (!text || cell.wrap) return <>{text}</>;
+function CellText({ cell, text, scale }: { cell: SheetCell; text: string; scale: number }) {
+  const runs = cell.runs;
+  if (!runs?.length || runs.map((run) => run.text).join('') !== cell.text) return <>{text}</>;
+  return (
+    <>
+      {runs.map((run, index) => (
+        <span
+          key={index}
+          style={{
+            fontSize: `${((run.size || cell.size) * scale) / 100}pt`,
+            fontWeight: run.bold ? 800 : 400,
+          }}
+        >
+          {run.text}
+        </span>
+      ))}
+    </>
+  );
+}
+
+function SheetSpill({ cell, text, scale }: { cell: SheetCell; text: string; scale: number }) {
+  if (!text || cell.wrap) return <CellText cell={cell} text={text} scale={scale} />;
   const align = cell.align === 'center' || cell.align === 'right' ? cell.align : 'left';
   const middle = cell.valign === 'center';
   const style: CSSProperties = {
@@ -210,7 +230,11 @@ function SheetSpill({ cell, text }: { cell: SheetCell; text: string }) {
             ? 'translateY(-50%)'
             : undefined,
   };
-  return <span style={style}>{text}</span>;
+  return (
+    <span style={style}>
+      <CellText cell={cell} text={text} scale={scale} />
+    </span>
+  );
 }
 
 function FormPage({
@@ -253,8 +277,18 @@ function FormPage({
   }
   const widths = layout.cols || [];
   const total = widths.reduce((sum, width) => sum + Number(width || 0), 0) || 1;
+  const centered = Boolean(layout.center);
+  // 中央寄せの請求書は、表の幅を用紙いっぱい（左右12mm）に広げて表示する。
+  // 文字だけ元の大きさのままだと枠に対して小さく見えるので、広げた分だけ文字も大きくする
+  const naturalPx = widths.reduce((sum, width) => sum + Math.trunc(((256 * Number(width || 0) + Math.trunc(128 / 7)) / 256) * 7), 0);
+  const pageMm = layout.orientation === 'landscape' ? 297 : 210;
+  const stretch = centered && naturalPx > 0 ? (((pageMm - 24) / 25.4) * 96) / ((naturalPx * scale) / 100) : 1;
+  const fontScale = scale * Math.min(1.15, Math.max(1, stretch));
+  const totalH =
+    layout.rows.reduce((sum, row) => sum + (Number(row.height) || layout.defaultRowHeight || 18), 0) || 1;
   const wrap = useRef<HTMLDivElement>(null);
   const [boxes, setBoxes] = useState<Record<number, { top: number; height: number }>>({});
+  const [imageLeft, setImageLeft] = useState<Record<number, number>>({});
   useLayoutEffect(() => {
     const root = wrap.current;
     if (!root) return;
@@ -273,6 +307,41 @@ function FormPage({
         if (top != null && bottom != null) next[i] = { top, height: Math.max(0, bottom - top) };
       });
       setBoxes(next);
+      const imgs = [...root.querySelectorAll('img')];
+      const rootR = root.getBoundingClientRect();
+      const imageIndexes = (layout.drawings || []).flatMap((item, index) => (item.kind === 'image' ? [index] : []));
+      const nudged: Record<number, number> = {};
+      imgs.forEach((img, ordinal) => {
+        const drawingIndex = imageIndexes[ordinal];
+        if (drawingIndex == null) return;
+        const ir = img.getBoundingClientRect();
+        let nameRight = -1;
+        let nameTop = Infinity;
+        for (const td of root.querySelectorAll('td')) {
+          const raw = [...td.childNodes].find((node) => node.nodeType === 3 && (node.textContent || '').trim());
+          if (!raw) continue;
+          const range = document.createRange();
+          range.selectNodeContents(raw);
+          for (const rect of range.getClientRects()) {
+            if (rect.width < 24) continue;
+            const gap = ir.left - rect.right;
+            const beside = rect.top < ir.top + ir.height * 0.4 && rect.bottom > ir.top + 2;
+            if (!beside || gap > 90 || gap < -24) continue;
+            if (rect.top < nameTop) {
+              nameTop = rect.top;
+              nameRight = rect.right;
+            }
+          }
+        }
+        if (nameRight > 0 && rootR.width) {
+          nudged[drawingIndex] = (nameRight - 16 - rootR.left) / rootR.width;
+        }
+      });
+      setImageLeft((prev) => {
+        const keys = Object.keys(nudged);
+        if (keys.length === Object.keys(prev).length && keys.every((key) => Math.abs((prev[Number(key)] || 0) - nudged[Number(key)]) < 0.004)) return prev;
+        return nudged;
+      });
     };
     measure();
     window.addEventListener('resize', measure);
@@ -293,8 +362,8 @@ function FormPage({
         ...pageFrame(layout),
       }}
     >
-      <div ref={wrap} style={{ position: 'relative', width: '100%', flex: '0 0 auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', overflow: 'visible' }}>
+      <div ref={wrap} style={{ position: 'relative', width: '100%', flex: centered ? '1 1 auto' : '0 0 auto', minHeight: centered ? 0 : undefined, height: centered ? '100%' : undefined }}>
+      <table style={{ width: '100%', height: centered ? '100%' : undefined, borderCollapse: 'collapse', tableLayout: 'fixed', overflow: 'visible' }}>
         <colgroup>
           {widths.map((width, index) => (
             <col key={index} style={{ width: `${(Number(width) / total) * 100}%` }} />
@@ -302,7 +371,16 @@ function FormPage({
         </colgroup>
         <tbody>
           {layout.rows.map((row, index) => (
-            <tr key={row.n} data-row={index} style={rowHeight(row.height, raw ? layout.defaultRowHeight : 0, scale)}>
+            <tr
+              key={row.n}
+              data-row={index}
+              style={rowHeight(
+                row.height,
+                raw ? layout.defaultRowHeight : 0,
+                scale,
+                centered ? ((Number(row.height) || layout.defaultRowHeight || 18) / totalH) * 100 : undefined
+              )}
+            >
               {row.cells.map((cell, col) => {
                 if (cover[`${index}:${col}`]) return null;
                 const merge = span[`${index}:${col}`];
@@ -311,16 +389,16 @@ function FormPage({
                 if (!raw && /^\d{4}年\d{1,2}月\d{1,2}日/.test(text)) text = today;
                 // 罫線のある表のマス目だけ切り詰め、罫線のない文章（振込先・会社情報など）は折り返し／はみ出して表示する
                 const clipCell = clip && Boolean(edges.left || edges.right || edges.top || edges.bottom);
-                const flow = cell.wrap && !(clip && !clipCell)
-                  ? { whiteSpace: 'pre-wrap' as const, wordBreak: 'break-word' as const }
-                  : { whiteSpace: 'pre' as const, overflow: 'visible', wordBreak: 'normal' as const };
+                const flow = cell.wrap
+                  ? { whiteSpace: 'pre-wrap' as const, wordBreak: 'break-word' as const, overflow: 'hidden' as const }
+                  : { whiteSpace: 'pre' as const, overflow: 'visible' as const, wordBreak: 'normal' as const };
                 return (
                   <td
                     key={col}
                     colSpan={merge && merge.cols > 1 ? merge.cols : undefined}
                     rowSpan={merge && merge.rows > 1 ? merge.rows : undefined}
                     style={{
-                      ...bookCss({ ...cell, border: false, wrap: false }, scale),
+                      ...bookCss({ ...cell, border: false, wrap: false }, fontScale),
                       borderLeft: edgeWidth(edges.left),
                       borderRight: edgeWidth(edges.right),
                       borderTop: edgeWidth(edges.top),
@@ -336,12 +414,19 @@ function FormPage({
                       WebkitPrintColorAdjust: 'exact',
                       printColorAdjust: 'exact',
                       position: !clipCell && text && !cell.wrap ? 'relative' : undefined,
-                      overflow: clipCell ? 'hidden' : text && !cell.wrap ? 'visible' : undefined,
-                      whiteSpace: 'pre',
+                      ...(clipCell || cell.wrap
+                        ? { overflow: 'hidden' as const }
+                        : text
+                          ? { overflow: 'visible' as const }
+                          : {}),
                       textOverflow: clipCell ? 'clip' : undefined,
                     }}
                   >
-                    {clipCell ? text : <SheetSpill cell={cell} text={text} />}
+                    {clipCell ? (
+                      <CellText cell={cell} text={text} scale={fontScale} />
+                    ) : (
+                      <SheetSpill cell={cell} text={text} scale={fontScale} />
+                    )}
                   </td>
                 );
               })}
@@ -349,13 +434,30 @@ function FormPage({
           ))}
         </tbody>
       </table>
-      {(layout.drawings || []).map((item, index) => {
+      {(layout.drawings || []).map((item, index, all) => {
+        // 挨拶文の枠は、文字の行数にぴったり合わせる（枠だけが縦に伸びて余白が空くのを防ぐ）
+        const fitted = (target: SheetLayout['drawings'][number]) =>
+          ((target.lines.length * 1.35 * target.size * fontScale) / 100 + 9) * (96 / 72);
+        let fitHeight = 0;
+        if (centered && item.kind === 'text') fitHeight = fitted(item);
+        if (centered && item.kind === 'box') {
+          const owner = all.find(
+            (other) =>
+              other.kind === 'text' &&
+              other.lines.length > 0 &&
+              Math.abs(other.x - item.x) < 0.03 &&
+              Math.abs(other.r1 - item.r1) <= 1 &&
+              Math.abs(other.r2 - item.r2) <= 1
+          );
+          if (owner) fitHeight = fitted(owner);
+        }
+        const boxHeight = boxes[index] && fitHeight ? Math.min(boxes[index].height, fitHeight) : boxes[index]?.height;
         const box: CSSProperties = {
           position: 'absolute',
-          left: `${item.x * 100}%`,
+          left: `${(item.kind === 'image' && imageLeft[index] != null ? imageLeft[index] : item.x) * 100}%`,
           width: `${item.w * 100}%`,
           top: boxes[index] ? `${boxes[index].top}px` : `${(item.y * scale) / 100}pt`,
-          height: boxes[index] ? `${boxes[index].height}px` : `${(item.h * scale) / 100}pt`,
+          height: boxHeight != null ? `${boxHeight}px` : `${(item.h * scale) / 100}pt`,
           pointerEvents: 'none',
         };
         if (item.kind === 'image') {
@@ -386,15 +488,24 @@ function FormPage({
               boxSizing: 'border-box',
               padding: '2pt 7pt',
               overflow: 'hidden',
-              fontSize: `${(item.size * scale) / 100}pt`,
+              fontSize: `${(item.size * fontScale) / 100}pt`,
+              fontWeight: 500,
               lineHeight: 1.35,
               whiteSpace: 'pre-wrap',
               color: '#000',
             }}
           >
-            {item.lines.map((line, i) => (
-              <div key={i}>{line || '\u00a0'}</div>
-            ))}
+            {item.lines.map((line, i) => {
+              const parked = /^[\s\u3000]{6,}(\S{1,12})$/.exec(line);
+              if (parked) {
+                return (
+                  <div key={i} style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    {parked[1]}
+                  </div>
+                );
+              }
+              return <div key={i}>{line || '\u00a0'}</div>;
+            })}
           </div>
         );
       })}
@@ -604,7 +715,7 @@ export function FitPages({ children }: { children: React.ReactNode }) {
   const page = box.current?.querySelector('.dispatch-page');
   const tall = page?.getAttribute('data-orient') === 'landscape' ? 793.7 : 1122.5;
   return (
-    <div ref={box} style={{ width: '100%', overflow: 'hidden' }}>
+    <div ref={box} style={{ width: '100%', overflow: 'hidden', display: 'flex', justifyContent: 'center' }}>
       <div style={{ width: zoom < 1 ? `${(page?.getAttribute('data-orient') === 'landscape' ? 1122.5 : 793.7) * zoom}px` : undefined, height: zoom < 1 ? tall * zoom : undefined }}>
         <div style={zoom < 1 ? { width: page?.getAttribute('data-orient') === 'landscape' ? 1122.5 : 793.7, transform: `scale(${zoom})`, transformOrigin: 'top left' } : undefined}>
           {children}
@@ -704,11 +815,32 @@ function printPages() {
 function pageFrame(layout: SheetLayout): CSSProperties {
   const margin = layout.margin || { top: 12, right: 10, bottom: 12, left: 10 };
   const landscape = layout.orientation === 'landscape';
+  const pageW = landscape ? '297mm' : '210mm';
+  const pageH = landscape ? '210mm' : '297mm';
+  if (layout.center) {
+    return {
+      width: pageW,
+      height: pageH,
+      minHeight: pageH,
+      margin: '0 auto 16px',
+      background: '#fff',
+      color: '#000',
+      padding: '12mm',
+      boxSizing: 'border-box',
+      boxShadow: '0 8px 28px rgba(0,0,0,.18)',
+      fontFamily: '"Yu Gothic","Yu Gothic UI","Hiragino Sans",Meiryo,sans-serif',
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'center',
+      alignItems: 'stretch',
+      overflow: 'hidden',
+    };
+  }
   const padY = (Number(margin.top) + Number(margin.bottom)) / 2;
   const padX = (Number(margin.left) + Number(margin.right)) / 2;
   return {
-    width: landscape ? '297mm' : '210mm',
-    minHeight: landscape ? '210mm' : '297mm',
+    width: pageW,
+    minHeight: pageH,
     margin: '0 auto 16px',
     background: '#fff',
     color: '#000',
@@ -814,7 +946,8 @@ export default function PrintPreview({
   );
 }
 
-function rowHeight(height: unknown, fallback: unknown, scale: number): CSSProperties | undefined {
+function rowHeight(height: unknown, fallback: unknown, scale: number, share?: number): CSSProperties | undefined {
+  if (share) return { height: `${share}%` };
   const h = Number(height) || Number(fallback) || 0;
   return h ? { height: `${(h * scale) / 100}pt` } : undefined;
 }

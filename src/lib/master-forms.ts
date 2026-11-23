@@ -12,6 +12,7 @@ export type MasterField = {
 };
 
 export type MasterDefinition = {
+  id?: string;
   table: MasterTable;
   title: string;
   blurb: string;
@@ -20,7 +21,16 @@ export type MasterDefinition = {
   searchColumns: string[];
   listColumns: { key: string; label: string }[];
   groups: { name: string; fields: MasterField[] }[];
+  /** 一覧と保存をこの列の値に限る。付帯売上は商品テーブルの一部。 */
+  match?: Record<string, string>;
+  /** 新規保存時に足す固定値 */
+  preset?: Record<string, string>;
+  hidden?: boolean;
 };
+
+export function masterKey(master: MasterDefinition) {
+  return master.id || master.table;
+}
 
 const text = (key: string, label: string, required = false): MasterField => ({
   key,
@@ -259,8 +269,8 @@ export const MASTER_FORMS: MasterDefinition[] = [
     listColumns: [
       { key: 'code', label: '機種ID' },
       { key: 'name', label: '機種名' },
+      { key: 'unit_name', label: '単位' },
       { key: 'standard_price_a', label: '標準単価' },
-      { key: 'owned_count', label: '保有台数' },
     ],
     groups: [
       {
@@ -268,15 +278,12 @@ export const MASTER_FORMS: MasterDefinition[] = [
         fields: [
           text('code', '機種ID', true),
           text('name', '機種名', true),
-          number('sort_order', '表示順'),
-          number('quote_sort_order', '見積表示順'),
-          number('owned_count', '標準保有台数'),
-          bool('require_price_flag', '単価の必須登録'),
         ],
       },
       {
         name: '単価',
         fields: [
+          text('unit_name', '単位'),
           number('standard_price_a', '標準単価'),
           number('standard_price_b', '標準単価2'),
           number('standard_price_c', '標準単価3'),
@@ -286,8 +293,37 @@ export const MASTER_FORMS: MasterDefinition[] = [
     ],
   },
   {
+    id: 'extra_sales',
+    table: 'products',
+    title: '付帯売上',
+    blurb: '残業・鉄板・高速代などの名前と単位。配車で選ぶと単位が入ります',
+    searchHint: 'コード、名前、単位',
+    requireQuery: false,
+    searchColumns: ['code', 'name', 'kana', 'unit_name'],
+    match: { category1: '付帯' },
+    preset: { category1: '付帯', product_type: 'クレーン' },
+    listColumns: [
+      { key: 'code', label: 'コード' },
+      { key: 'name', label: '付帯名' },
+      { key: 'unit_name', label: '単位' },
+      { key: 'dispatch_sort_order', label: '表示順' },
+    ],
+    groups: [
+      {
+        name: '基本',
+        fields: [
+          autoCode('code', 'コード'),
+          text('name', '付帯名', true),
+          text('unit_name', '単位'),
+          number('dispatch_sort_order', '表示順'),
+        ],
+      },
+    ],
+  },
+  {
     table: 'products',
     title: '商品',
+    hidden: true,
     blurb: '車両・クレーンと車検期限',
     searchHint: 'コード、商品名、型式、管理番号',
     requireQuery: false,

@@ -44,6 +44,7 @@ type SiteGroup = { name: string; jobCode: string; amount: number; jobs: BillJob[
 type Group = {
   code: string;
   name: string;
+  address: string;
   jobs: BillJob[];
   sites: SiteGroup[];
   amount: number;
@@ -56,6 +57,15 @@ function money(value: number): string {
 
 // 売上合計(total_sales_amount)は「基本＋付帯」で保存されるため、付帯を二重に足さない。
 // 基本は売上単価を優先し、無ければ合計から付帯を引いて求める。
+function machineUnit(
+  models: { name: string; unit_name?: string | null }[],
+  modelName: string | null | undefined
+) {
+  const name = String(modelName || '').trim();
+  const model = models.find((item) => String(item.name || '').trim() === name);
+  return String(model?.unit_name || '').trim() || '式';
+}
+
 function standardPrice(
   models: { name: string; standard_price_a: number | null; night_standard_price: number | null }[],
   modelName: string | null | undefined,
@@ -94,7 +104,10 @@ export default function BillingClient() {
   const [anchor, setAnchor] = useState('');
   const [close, setClose] = useState('');
   const [customers, setCustomers] = useState<Customer[]>([]);
-  const [models, setModels] = useState<{ name: string; standard_price_a: number | null; night_standard_price: number | null }[]>([]);
+  const [models, setModels] = useState<
+    { name: string; standard_price_a: number | null; night_standard_price: number | null; unit_name?: string | null }[]
+  >([]);
+  const [extraUnits, setExtraUnits] = useState<Record<string, string>>({});
   const [jobs, setJobs] = useState<Job[]>([]);
   const [extras, setExtras] = useState<Record<string, ExtraRow[]>>({});
   const [detail, setDetail] = useState<{ code: string; mode: 'flat' | 'site' } | null>(null);
@@ -134,9 +147,30 @@ export default function BillingClient() {
         else setCustomers((data ?? []) as Customer[]);
         const modelRes = await supabase
           .from('machine_models')
-          .select('name, standard_price_a, night_standard_price')
+          .select('name, standard_price_a, night_standard_price, unit_name')
           .eq('company_id', id);
-        if (!cancelled && !modelRes.error) setModels(modelRes.data ?? []);
+        const modelRows = modelRes.error && /unit_name/i.test(modelRes.error.message)
+          ? (
+              await supabase
+                .from('machine_models')
+                .select('name, standard_price_a, night_standard_price')
+                .eq('company_id', id)
+            ).data
+          : modelRes.data;
+        if (!cancelled && modelRows) setModels(modelRows);
+        const extraRes = await supabase
+          .from('products')
+          .select('name, unit_name')
+          .eq('company_id', id)
+          .eq('category1', '付帯');
+        if (!cancelled && !extraRes.error) {
+          const units: Record<string, string> = {};
+          for (const row of extraRes.data ?? []) {
+            const unit = String(row.unit_name || '').trim();
+            if (row.name && unit) units[String(row.name)] = unit;
+          }
+          setExtraUnits(units);
+        }
       })
       .catch((err: Error) => {
         if (!cancelled) setError(err.message || '会社マスタを読み込めません');
@@ -255,6 +289,14 @@ export default function BillingClient() {
     return map;
   }, [customers]);
 
+  const addressByCode = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const customer of customers) {
+      map.set(customer.code, [customer.address1, customer.address2].filter(Boolean).join(' '));
+    }
+    return map;
+  }, [customers]);
+
   const { groups, skipped } = useMemo(() => {
     const bucket = new Map<string, Group>();
     let skippedCount = 0;
@@ -272,6 +314,7 @@ export default function BillingClient() {
       const current = bucket.get(code) ?? {
         code,
         name: nameByCode.get(code) || job.customer_name || code,
+        address: addressByCode.get(code) || '',
         jobs: [],
         sites: [],
         amount: 0,
@@ -303,7 +346,7 @@ export default function BillingClient() {
     });
     list.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
     return { groups: list, skipped: skippedCount };
-  }, [jobs, extras, close, closeByCode, nameByCode, models]);
+  }, [jobs, extras, close, closeByCode, nameByCode, addressByCode, models]);
 
   const total = groups.reduce((sum, group) => sum + group.amount, 0);
   const selected = detail ? groups.find((group) => group.code === detail.code) : undefined;
@@ -311,6 +354,10 @@ export default function BillingClient() {
   function amountLabel(group: { amount: number; missing: number }) {
     const text = group.missing && !group.amount ? '単価未入力' : money(group.amount);
     return group.missing && group.amount ? `${text}（未入力 ${group.missing}件）` : text;
+  }
+
+  function unitOfExtra(line: ExtraRow) {
+    return line.unit || extraUnits[line.name] || '';
   }
 
   function openInvoice(group: Group) {
@@ -344,7 +391,7 @@ export default function BillingClient() {
         qty: line.quantity,
         price: line.unit_price,
         amount: line.amount,
-        note: line.unit ? `単位: ${line.unit}` : '',
+        note: unitOfExtra(line) ? `単位: ${unitOfExtra(line)}` : '',
         start: shown,
         end: shown,
       }));
@@ -392,7 +439,7 @@ export default function BillingClient() {
         date: shownDay(job.work_date),
         site: job.site_name || '',
         qty: unpriced ? '' : 1,
-        unit: unpriced ? '' : '式',
+        unit: unpriced ? '' : machineUnit(models, job.requested_model),
         price: unpriced ? '' : job.base ?? '',
         amount: unpriced ? '' : job.base ?? '',
         note: unpriced ? '単価未入力' : '',
@@ -402,7 +449,7 @@ export default function BillingClient() {
         date: '',
         site: '',
         qty: line.quantity,
-        unit: line.unit || '',
+        unit: unitOfExtra(line),
         price: line.unit_price,
         amount: line.amount,
         note: '',
@@ -441,7 +488,7 @@ export default function BillingClient() {
         <td className="px-3 py-3 font-bold">{job.requested_model || '機種未入力'}</td>
         <td className="px-3 py-3 whitespace-nowrap font-bold">{timeRange(job)}</td>
         <td className="px-3 py-3 text-right font-bold">1</td>
-        <td className="px-3 py-3 font-bold">式</td>
+        <td className="px-3 py-3 font-bold">{machineUnit(models, job.requested_model)}</td>
         <td className="px-3 py-3 text-right font-bold">{hours}</td>
         <td className="px-3 py-3 text-right whitespace-nowrap font-bold">{job.base == null ? '未入力' : money(job.base)}</td>
         <td className="px-3 py-3 font-bold">
@@ -467,7 +514,7 @@ export default function BillingClient() {
             └ 付帯売上　{line.name}
           </td>
           <td className="px-3 py-1.5 text-right font-bold">{line.quantity}</td>
-          <td className="px-3 py-1.5 font-bold">{line.unit}</td>
+          <td className="px-3 py-1.5 font-bold">{unitOfExtra(line)}</td>
           <td className="px-3 py-1.5" />
           <td className="px-3 py-1.5 text-right whitespace-nowrap font-bold">{money(line.unit_price)}</td>
           <td className="px-3 py-1.5" />
@@ -547,6 +594,7 @@ export default function BillingClient() {
             </div>
             <div className="px-4 py-3">
               <h2 className="text-xl font-extrabold">{selected.name}</h2>
+              {selected.address && <p className="text-sm font-bold text-slate-600">{selected.address}</p>}
               <p className="text-sm font-bold text-slate-500">
                 {isSumitomoCustomer(selected.code) ? '工事コード別の請求' : detail?.mode === 'site' ? '現場別請求明細' : '請求明細'}　{selected.jobs.length}件　{amountLabel(selected)}
               </p>
@@ -618,6 +666,7 @@ export default function BillingClient() {
                 </button>
                 <div className="flex-1 min-w-40">
                   <div className="font-extrabold">{group.name}</div>
+                  {group.address && <div className="text-xs font-bold text-slate-600">{group.address}</div>}
                   <div className="text-xs font-bold text-slate-500">
                     {group.jobs.length}件　{amountLabel(group)}
                   </div>

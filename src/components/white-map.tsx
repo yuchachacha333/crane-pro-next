@@ -13,16 +13,152 @@ type Props = {
 type Geocode = { lat: number | null; lng: number | null; label: string };
 type Point = { lat: number; lng: number };
 
-type CaptureTrack = MediaStreamTrack & {
-  restrictTo?: (target: unknown) => Promise<void>;
-};
+type View = { lat: number; lng: number; zoom: number };
 
-type CaptureOptions = DisplayMediaStreamOptions & {
-  preferCurrentTab?: boolean;
-  selfBrowserSurface?: 'include' | 'exclude';
-  surfaceSwitching?: 'include' | 'exclude';
-  monitorTypeSurfaces?: 'include' | 'exclude';
-};
+const TILE = 512;
+const MIN_ZOOM = 13;
+const MAX_ZOOM = 19;
+// 画面用のタイルは17までしか中身が入っていないので、それ以上は拡大して見せる（出力は別に描き直す）
+const MAX_TILE_ZOOM = 17;
+
+function toWorld(lat: number, lng: number, zoom: number) {
+  const scale = TILE * 2 ** zoom;
+  const sine = Math.sin((lat * Math.PI) / 180);
+  return {
+    x: ((lng + 180) / 360) * scale,
+    y: (0.5 - Math.log((1 + sine) / (1 - sine)) / (4 * Math.PI)) * scale,
+  };
+}
+
+function fromWorld(x: number, y: number, zoom: number) {
+  const scale = TILE * 2 ** zoom;
+  return {
+    lng: (x / scale) * 360 - 180,
+    lat: (Math.atan(Math.sinh(Math.PI * (1 - (2 * y) / scale))) * 180) / Math.PI,
+  };
+}
+
+function TileMap({
+  view,
+  size,
+  pin,
+  onChange,
+}: {
+  view: View;
+  size: { width: number; height: number };
+  pin: Point;
+  onChange: (next: View) => void;
+}) {
+  const drag = useRef<{ x: number; y: number } | null>(null);
+  const tileZoom = Math.min(MAX_TILE_ZOOM, Math.max(0, Math.floor(view.zoom)));
+  const ratio = 2 ** (view.zoom - tileZoom);
+  const tileSize = TILE * ratio;
+  const center = toWorld(view.lat, view.lng, tileZoom);
+  const limit = 2 ** tileZoom;
+  const halfW = size.width / 2 / ratio;
+  const halfH = size.height / 2 / ratio;
+  const tiles: { key: string; x: number; y: number; left: number; top: number }[] = [];
+  if (size.width > 0 && size.height > 0) {
+    const x0 = Math.floor((center.x - halfW) / TILE);
+    const x1 = Math.floor((center.x + halfW) / TILE);
+    const y0 = Math.floor((center.y - halfH) / TILE);
+    const y1 = Math.floor((center.y + halfH) / TILE);
+    for (let x = x0; x <= x1; x += 1) {
+      for (let y = y0; y <= y1; y += 1) {
+        if (x < 0 || y < 0 || x >= limit || y >= limit) continue;
+        tiles.push({
+          key: `${tileZoom}/${x}/${y}`,
+          x,
+          y,
+          left: size.width / 2 + (x * TILE - center.x) * ratio,
+          top: size.height / 2 + (y * TILE - center.y) * ratio,
+        });
+      }
+    }
+  }
+  const pinWorld = toWorld(pin.lat, pin.lng, view.zoom);
+  const here = toWorld(view.lat, view.lng, view.zoom);
+  const pinLeft = size.width / 2 + pinWorld.x - here.x;
+  const pinTop = size.height / 2 + pinWorld.y - here.y;
+
+  const zoomAt = (next: number, cx: number, cy: number) => {
+    const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
+    if (zoom === view.zoom) return;
+    const offX = cx - size.width / 2;
+    const offY = cy - size.height / 2;
+    const before = toWorld(view.lat, view.lng, view.zoom);
+    const factor = 2 ** (zoom - view.zoom);
+    const target = { x: (before.x + offX) * factor - offX, y: (before.y + offY) * factor - offY };
+    onChange({ ...fromWorld(target.x, target.y, zoom), zoom });
+  };
+
+  return (
+    <div
+      className="absolute inset-0 touch-none select-none overflow-hidden bg-white"
+      style={{ cursor: 'grab' }}
+      onPointerDown={(event) => {
+        event.currentTarget.setPointerCapture(event.pointerId);
+        drag.current = { x: event.clientX, y: event.clientY };
+      }}
+      onPointerMove={(event) => {
+        if (!drag.current) return;
+        const dx = event.clientX - drag.current.x;
+        const dy = event.clientY - drag.current.y;
+        drag.current = { x: event.clientX, y: event.clientY };
+        onChange({ ...fromWorld(here.x - dx, here.y - dy, view.zoom), zoom: view.zoom });
+      }}
+      onPointerUp={() => {
+        drag.current = null;
+      }}
+      onPointerCancel={() => {
+        drag.current = null;
+      }}
+      onWheel={(event) => {
+        const box = event.currentTarget.getBoundingClientRect();
+        zoomAt(view.zoom - event.deltaY / 400, event.clientX - box.left, event.clientY - box.top);
+      }}
+    >
+      {tiles.map((tile) => (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          key={tile.key}
+          src={`/api/map-mono?z=${tileZoom}&x=${tile.x}&y=${tile.y}`}
+          alt=""
+          draggable={false}
+          style={{
+            position: 'absolute',
+            left: tile.left,
+            top: tile.top,
+            width: tileSize + 0.5,
+            height: tileSize + 0.5,
+            maxWidth: 'none',
+          }}
+        />
+      ))}
+      <div
+        className="pointer-events-none absolute rounded-full bg-black"
+        style={{ left: pinLeft - 9, top: pinTop - 9, width: 18, height: 18, boxShadow: '0 0 0 3px #fff' }}
+      />
+      <div className="absolute right-3 top-3 flex flex-col gap-2">
+        {[
+          { label: '+', delta: 0.5 },
+          { label: '−', delta: -0.5 },
+        ].map((item) => (
+          <button
+            key={item.label}
+            type="button"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => zoomAt(view.zoom + item.delta, size.width / 2, size.height / 2)}
+            className="h-10 w-10 rounded-lg border-2 border-slate-800 bg-white text-xl font-black text-black"
+            aria-label={item.delta > 0 ? '拡大' : '縮小'}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function WhiteMapDialog({ address, date, siteName, onClose }: Props) {
   const mapRef = useRef<HTMLDivElement>(null);
@@ -36,6 +172,7 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
   const [saving, setSaving] = useState(false);
   const [phone, setPhone] = useState(false);
   const [layoutReady, setLayoutReady] = useState(false);
+  const [view, setView] = useState<View | null>(null);
 
   const filePart = (value: string) => value.replace(/[\\/:*?"<>|\r\n]/g, ' ').replace(/\s+/g, ' ').trim();
   const fileBase = [date || '日付なし', filePart(siteName) || '現場', filePart(address)].filter(Boolean).join('_');
@@ -47,6 +184,7 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
   useEffect(() => {
     let cancelled = false;
     setPoint(null);
+    setView(null);
     setSrc('');
 
     async function load() {
@@ -64,6 +202,7 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
       const label = found.label || address;
       setPlace(label);
       setPoint({ lat: found.lat, lng: found.lng });
+      setView({ lat: found.lat, lng: found.lng, zoom: 17 });
       setStatus(label);
     }
 
@@ -111,57 +250,32 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
 
   async function saveMap() {
     const sheet = frameRef.current;
-    if (!sheet || !src || saving) return;
+    const map = mapRef.current;
+    if (!sheet || !map || !point || !view || saving) return;
     setSaving(true);
-    setStatus('表示された画面で、このタブを選んでください');
-    let stream: MediaStream | undefined;
-    let bitmap: ImageBitmap | undefined;
+    setStatus('印刷用の地図を作っています');
     try {
-      stream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: false,
-        preferCurrentTab: true,
-        selfBrowserSurface: 'include',
-        surfaceSwitching: 'exclude',
-        monitorTypeSurfaces: 'exclude',
-      } as CaptureOptions);
-      const [track] = stream.getVideoTracks() as CaptureTrack[];
-      const surface = track.getSettings().displaySurface;
-      if (surface && surface !== 'browser') {
-        setStatus('「このタブ」を選ぶと、地図だけ保存できます');
-        return;
-      }
-      const video = document.createElement('video');
-      video.srcObject = stream;
-      video.muted = true;
-      video.playsInline = true;
-      await video.play();
-      const Restriction = (window as unknown as {
-        RestrictionTarget?: { fromElement: (element: Element) => Promise<unknown> };
-      }).RestrictionTarget;
-      if (Restriction && track.restrictTo) {
-        try {
-          const target = await Restriction.fromElement(sheet);
-          await track.restrictTo(target);
-        } catch {
-          // 範囲指定できないブラウザは、あとで地図の位置だけ切り出す
-        }
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, 400));
-      bitmap = await createImageBitmap(video);
-      const canvas = cropMap(bitmap, sheet);
-      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
-      if (!blob) throw new Error('empty');
+      const frameBox = sheet.getBoundingClientRect();
+      const logicalW = Math.min(1280, Math.max(200, Math.round(frameBox.width)));
+      const logicalH = Math.max(200, Math.round((logicalW * FRAME_H_MM) / FRAME_W_MM));
+      const zoom = view.zoom + Math.log2(logicalW / frameBox.width);
+      const params = new URLSearchParams({
+        lat: String(view.lat),
+        lng: String(view.lng),
+        zoom: String(zoom),
+        w: String(logicalW),
+        h: String(logicalH),
+        plat: String(point.lat),
+        plng: String(point.lng),
+      });
+      const response = await fetch(`/api/map-image?${params}`);
+      if (!response.ok) throw new Error('map');
+      const blob = await response.blob();
       await downloadMapWord(blob, fileBase);
       setStatus(place || address);
-    } catch (error) {
-      const name = error instanceof DOMException ? error.name : '';
-      if (name === 'NotAllowedError' || name === 'AbortError') setStatus(place || address);
-      else if (name === 'NotSupportedError') setStatus('Chrome または Edge で開くと出力できます');
-      else setStatus('ワードに出力できませんでした');
+    } catch {
+      setStatus('ワードに出力できませんでした');
     } finally {
-      stream?.getTracks().forEach((track) => track.stop());
-      bitmap?.close();
       setSaving(false);
     }
   }
@@ -176,7 +290,7 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
               {status === place
                 ? phone
                   ? `${fileBase}.pdf として開きます`
-                  : '枠の中が、比率を変えずにA4横へ入ります'
+                  : '地図を動かして拡大縮小すると、枠の中がそのままA4横へ入ります'
                 : status}
             </p>
           </div>
@@ -184,7 +298,7 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
             <button
               type="button"
               onClick={() => void saveMap()}
-              disabled={!src || saving}
+              disabled={!view || saving}
               className="h-10 rounded-xl bg-slate-900 px-3 font-bold text-white disabled:opacity-40"
             >
               ワードに出力
@@ -197,17 +311,16 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
         <div className="flex min-h-0 flex-1 flex-col bg-white">
           <p className="shrink-0 border-b border-slate-200 px-4 py-2 text-lg font-black text-black">{address}</p>
           <div ref={mapRef} className="relative min-h-0 flex-1 overflow-hidden bg-white">
-            {src && layoutReady ? (
+            {src && layoutReady && phone ? (
               <iframe
                 title={`${address}のヤフー地図`}
                 src={src}
                 style={{ filter: 'grayscale(1) contrast(1.7) brightness(0.92)' }}
-                className={
-                  phone
-                    ? 'absolute -left-[260px] -top-[150px] h-[calc(100%+150px)] w-[calc(100%+260px)]'
-                    : 'absolute top-0 -left-[260px] h-full w-[calc(100%+260px)]'
-                }
+                className="absolute -left-[260px] -top-[150px] h-[calc(100%+150px)] w-[calc(100%+260px)]"
               />
+            ) : null}
+            {layoutReady && !phone && view && point ? (
+              <TileMap view={view} size={mapSize} pin={point} onChange={setView} />
             ) : null}
             {layoutReady && !phone ? (
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -246,32 +359,3 @@ export default function WhiteMapDialog({ address, date, siteName, onClose }: Pro
   );
 }
 
-function cropMap(bitmap: ImageBitmap, sheet: HTMLElement) {
-  const rect = sheet.getBoundingClientRect();
-  const canvas = document.createElement('canvas');
-  const context = canvas.getContext('2d');
-  if (!context) return canvas;
-  const expected = rect.width * (window.devicePixelRatio || 1);
-  if (bitmap.width > expected * 1.6) {
-    const scaleX = bitmap.width / window.innerWidth;
-    const scaleY = bitmap.height / window.innerHeight;
-    canvas.width = Math.max(1, Math.round(rect.width * scaleX));
-    canvas.height = Math.max(1, Math.round(rect.height * scaleY));
-    context.drawImage(
-      bitmap,
-      rect.left * scaleX,
-      rect.top * scaleY,
-      rect.width * scaleX,
-      rect.height * scaleY,
-      0,
-      0,
-      canvas.width,
-      canvas.height
-    );
-    return canvas;
-  }
-  canvas.width = bitmap.width;
-  canvas.height = bitmap.height;
-  context.drawImage(bitmap, 0, 0);
-  return canvas;
-}

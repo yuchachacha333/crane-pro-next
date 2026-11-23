@@ -4,6 +4,8 @@ import JSZip from 'jszip';
 
 export type SheetEdges = { left: string; right: string; top: string; bottom: string };
 
+export type SheetRun = { text: string; size: number; bold: boolean };
+
 export type SheetCell = {
   text: string;
   size: number;
@@ -17,6 +19,7 @@ export type SheetCell = {
   fill?: string;
   color?: string;
   diag?: boolean;
+  runs?: SheetRun[];
 };
 
 export type SheetDrawing = {
@@ -45,6 +48,7 @@ export type SheetLayout = {
   orientation: string;
   defaultRowHeight: number;
   margin: { top: number; right: number; bottom: number; left: number };
+  center?: boolean;
   cols: number[];
   rows: { n: number; height: number; cells: SheetCell[] }[];
   merges: { r: number; c: number; rows: number; cols: number }[];
@@ -154,14 +158,25 @@ function xfsOf(styles: string) {
   });
 }
 
+function readText(xml: string) {
+  let text = '';
+  const re = /<t[^>]*>([\s\S]*?)<\/t>/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(xml))) text += decodeXml(match[1]);
+  return text;
+}
+
 function stringsOf(xml: string) {
   const body = String(xml || '').replace(/<rPh[\s\S]*?<\/rPh>/g, '');
   return body.split(/<si\b[^>]*>/).slice(1).map((part) => {
-    let text = '';
-    const re = /<t[^>]*>([\s\S]*?)<\/t>/g;
-    let match: RegExpExecArray | null;
-    while ((match = re.exec(part))) text += decodeXml(match[1]);
-    return text;
+    const runs = [...part.matchAll(/<r\b[^>]*>([\s\S]*?)<\/r>/g)].map((match) => {
+      const run = match[1];
+      const size = run.match(/<sz[^>]*val="([\d.]+)"/);
+      const bold = /<b\/>/.test(run) || /<b [^>]*val="(?:1|true)"/.test(run);
+      return { text: readText(run), size: size ? Number(size[1]) : 0, bold };
+    });
+    const text = runs.length ? runs.map((run) => run.text).join('') : readText(part);
+    return { text, runs: runs.some((run) => run.size > 0) ? runs : [] };
   });
 }
 
@@ -212,7 +227,7 @@ function cellStyle(
 
 function cellsOf(
   rowXml: string,
-  strings: string[],
+  strings: ReturnType<typeof stringsOf>,
   xfs: ReturnType<typeof xfsOf>,
   fonts: ReturnType<typeof fontsOf>,
   count: number,
@@ -228,9 +243,12 @@ function cellsOf(
     const styleIndex = attr(head, 's');
     const formula = /<f[\s>]/.test(part);
     let text = '';
+    let runs: SheetRun[] = [];
     if (kind === 's') {
       const shared = part.match(/<v>([\s\S]*?)<\/v>/);
-      text = strings[shared ? Number(shared[1]) : -1] || '';
+      const item = strings[shared ? Number(shared[1]) : -1];
+      text = item?.text || '';
+      runs = item?.runs || [];
     } else if (kind === 'inlineStr') {
       const inline = part.match(/<t[^>]*>([\s\S]*?)<\/t>/);
       text = inline ? decodeXml(inline[1]) : '';
@@ -240,6 +258,7 @@ function cellsOf(
     }
     const styled = cellStyle(styleIndex === '' ? 0 : Number(styleIndex), xfs, fonts, text);
     styled.formula = formula;
+    if (runs.length) styled.runs = runs;
     grid[col] = styled;
   }
   return grid;
@@ -269,9 +288,6 @@ function layoutOf(sheet: string, styles: string, stringsXml: string): SheetLayou
   const end = dim.match(/:([A-Z]+)/);
   let count = end ? colIndex(end[1] + '1') + 1 : 7;
   if (count < 1) count = 7;
-  // 手動の改ページ位置までが印刷範囲（はみ出す文字が見切れないよう列を足す）
-  const brk = sheet.match(/<colBreaks[\s\S]*?<brk id="(\d+)"/);
-  if (brk && Number(brk[1]) > count) count = Number(brk[1]);
   const format = (sheet.match(/<sheetFormatPr\b[^>]*\/?>/) || [''])[0];
   const defaultHeight = Number(attr(format, 'defaultRowHeight')) || 18;
   const endRow = dim.match(/:([A-Z]+)(\d+)/);

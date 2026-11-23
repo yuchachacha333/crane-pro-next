@@ -424,9 +424,15 @@ export default function CraneProApp() {
   // 詳細モーダルを開く（付帯売上明細も取得）
   const openJobModal = async (job: DispatchRecord) => {
     const opened = { ...job };
-    if (opened.unit_price == null) {
-      const standard = standardPrice(opened.requested_model || '', opened.shift_type || '');
-      if (standard != null) opened.unit_price = standard;
+    if (opened.unit_price == null && opened.requested_model) {
+      const remembered = await salesPriceFor(
+        opened.customer_code || '',
+        opened.customer_name || '',
+        opened.requested_model,
+        opened.shift_type || '',
+        opened.id
+      );
+      if (remembered != null) opened.unit_price = remembered;
     }
     if (opened.purchase_amount == null && opened.supplier_name) {
       const remembered = await latestPurchase(opened.supplier_code || '', opened.supplier_name);
@@ -444,7 +450,7 @@ export default function CraneProApp() {
       id: d.id,
       item_name: d.item_name || '',
       quantity: Number(d.quantity ?? 1),
-      unit: d.unit || '',
+      unit: d.unit || String(extraProducts.find((p) => p.name === d.item_name)?.unit_name || ''),
       unit_price: Number(d.unit_price ?? 0),
       amount: Number(d.amount ?? 0),
       notes: d.notes || '',
@@ -489,6 +495,7 @@ export default function CraneProApp() {
     if (!companyId) return;
     const name = (window.prompt('登録する付帯の名前（例: 残業代、鉄板、高速代）') || '').trim();
     if (!name) return;
+    const unit = (window.prompt('単位（例: h、枚、式）。空欄でも登録できます', '') || '').trim();
     if (extraItems.some((p) => p.name === name)) {
       showToast('同じ名前がすでにあります。一覧から選んでください');
       return;
@@ -501,7 +508,7 @@ export default function CraneProApp() {
         company_id: companyId,
         code: String(maxCode + 1),
         name,
-        unit_name: '',
+        unit_name: unit,
         category1: '付帯',
         product_type: 'クレーン',
         dispatch_sort_order: maxSort + 1,
@@ -515,7 +522,7 @@ export default function CraneProApp() {
     setExtraProducts((prev) => [...prev, data]);
     setExtras((prev) => {
       const next = [...prev];
-      if (next[index]) next[index] = { ...next[index], item_name: name };
+      if (next[index]) next[index] = { ...next[index], item_name: name, unit: unit || next[index].unit };
       return next;
     });
     showToast(`「${name}」を付帯マスタに登録しました`);
@@ -712,7 +719,7 @@ export default function CraneProApp() {
   const supplierItems = customers
     .filter((customer) => customer.name && String(customer.partner_type || '').includes('仕入'))
     .map((customer) => ({
-      id: String(customer.id || customer.code),
+      id: String(customer.code || customer.id),
       name: String(customer.name),
       kana: String(customer.kana || ''),
       searchWord: String(customer.search_word || ''),
@@ -809,16 +816,18 @@ export default function CraneProApp() {
       (id && customers.find((customer) => String(customer.code || customer.id) === id)) ||
       customers.find((customer) => customer.name === val);
     if (!hit) {
-      handleUpdateField(row.id, {
+      const patch: Partial<DispatchRecord> = {
         customer_name: val,
         ...(val ? {} : { customer_code: '', contact_code: '', contact_name: '', contact_tel: '' }),
-      });
+      };
+      handleUpdateField(row.id, patch);
+      rememberSalesPrice(row, patch);
       return;
     }
     const people = peopleFor(hit.code || '', hit.name || '');
     const only = people.length === 1 ? people[0] : null;
     const changed = (hit.code || '') !== (row.customer_code || '');
-    handleUpdateField(row.id, {
+    const patch: Partial<DispatchRecord> = {
       customer_name: val,
       customer_code: hit.code || '',
       ...(changed
@@ -833,7 +842,9 @@ export default function CraneProApp() {
         : only && !row.contact_name
           ? { contact_code: only.code, contact_name: only.name, contact_tel: only.tel }
           : {}),
-    });
+    };
+    handleUpdateField(row.id, patch);
+    rememberSalesPrice(row, patch);
   };
   const standardPrice = (modelName: string, shift: string) => {
     const name = modelName.trim();
@@ -847,14 +858,77 @@ export default function CraneProApp() {
     if (Number.isFinite(dayPrice) && dayPrice > 0) return dayPrice;
     return null;
   };
-  const withStandardPrice = (row: DispatchRecord, patch: Partial<DispatchRecord>) => {
+  const latestSalesPrice = async (
+    customerCode: string,
+    customerName: string,
+    modelName: string,
+    shift: string,
+    excludeId?: string
+  ) => {
+    const model = modelName.trim();
+    if (!companyId || !model || (!customerCode && !customerName)) return null;
+    let query = supabase
+      .from('dispatches')
+      .select('id, unit_price, requested_model, shift_type, is_cancelled')
+      .eq('company_id', companyId)
+      .not('unit_price', 'is', null)
+      .order('work_date', { ascending: false })
+      .limit(120);
+    query = customerCode ? query.eq('customer_code', customerCode) : query.eq('customer_name', customerName);
+    const { data, error } = await query;
+    if (error || !data) return null;
+    const night = String(shift || '').includes('夜');
+    const hit = data.find(
+      (item) =>
+        item.id !== excludeId &&
+        !item.is_cancelled &&
+        String(item.requested_model || '').trim() === model &&
+        String(item.shift_type || '').includes('夜') === night &&
+        item.unit_price != null
+    );
+    if (!hit) return null;
+    const amount = Number(hit.unit_price);
+    return Number.isFinite(amount) ? amount : null;
+  };
+  const salesPriceFor = async (
+    customerCode: string,
+    customerName: string,
+    modelName: string,
+    shift: string,
+    excludeId?: string
+  ) => {
+    const remembered = await latestSalesPrice(customerCode, customerName, modelName, shift, excludeId);
+    if (remembered != null) return remembered;
+    return standardPrice(modelName, shift);
+  };
+  const rememberSalesPrice = (row: DispatchRecord, patch: Partial<DispatchRecord>) => {
     const next = { ...row, ...patch };
-    const nextPrice = standardPrice(next.requested_model || '', next.shift_type || '');
-    const previousPrice = standardPrice(row.requested_model || '', row.shift_type || '');
-    const empty = row.unit_price == null;
-    const followedMaster = previousPrice != null && Number(row.unit_price) === previousPrice;
-    if (nextPrice != null && (empty || followedMaster)) patch.unit_price = nextPrice;
-    return patch;
+    const changed =
+      (patch.customer_name !== undefined && patch.customer_name !== row.customer_name) ||
+      (patch.customer_code !== undefined && (patch.customer_code || '') !== (row.customer_code || '')) ||
+      (patch.requested_model !== undefined && patch.requested_model !== row.requested_model) ||
+      (patch.shift_type !== undefined && patch.shift_type !== row.shift_type);
+    if (!changed) return;
+    const code = next.customer_code || '';
+    const name = next.customer_name || '';
+    const model = next.requested_model || '';
+    const shift = next.shift_type || '';
+    if (!model.trim() || (!code && !name)) return;
+    void (async () => {
+      const nextPrice = await salesPriceFor(code, name, model, shift, row.id);
+      let write = false;
+      setDispatches((prev) => {
+        const current = prev.find((item) => item.id === row.id);
+        if (!current) return prev;
+        if ((current.customer_code || '') !== code || (current.customer_name || '') !== name) return prev;
+        if ((current.requested_model || '') !== model || (current.shift_type || '') !== shift) return prev;
+        if (current.unit_price !== row.unit_price) return prev;
+        if ((current.unit_price ?? null) === nextPrice) return prev;
+        write = true;
+        return prev.map((item) => (item.id === row.id ? { ...item, unit_price: nextPrice } : item));
+      });
+      if (write) await supabase.from('dispatches').update({ unit_price: nextPrice }).eq('id', row.id);
+    })();
   };
   const latestPurchase = async (supplierCode: string, supplierName: string) => {
     let query = supabase
@@ -1349,11 +1423,13 @@ export default function CraneProApp() {
                         {/* 庸車（オペレーターが入っている場合はロック） */}
                         <td className="p-0 border-r border-slate-200">
                           <NamePicker
+                            panel
                             value={row.supplier_name || ''}
+                            currentId={row.supplier_code || ''}
                             items={supplierItems}
                             title="庸車先を選ぶ"
                             disabled={hasOp && !hasSup}
-                            placeholder={hasOp ? '自社オペ中' : '名前・カナ・漢字・英字'}
+                            placeholder={hasOp ? '自社オペ中' : 'タップして選ぶ'}
                             onSelect={(name) => applySupplier(row, name)}
                             className="w-full h-11 px-2.5 bg-transparent font-bold focus:bg-white focus:ring-2 focus:ring-teal-600 outline-none disabled:bg-slate-100 disabled:text-slate-400"
                           />
@@ -1452,7 +1528,11 @@ export default function CraneProApp() {
                             items={modelItems}
                             title="機種を選ぶ"
                             placeholder="選ぶか、直接入力"
-                            onSelect={(name) => handleUpdateField(row.id, withStandardPrice(row, { requested_model: name }))}
+                            onSelect={(name) => {
+                              const patch = { requested_model: name };
+                              handleUpdateField(row.id, patch);
+                              rememberSalesPrice(row, patch);
+                            }}
                             className={`w-full h-9 px-2 rounded-lg border font-extrabold text-xs outline-none focus:ring-2 focus:ring-teal-600 ${badgeColor}`}
                           />
                         </td>
@@ -1461,9 +1541,11 @@ export default function CraneProApp() {
                         <td className="p-0 border-r border-slate-200">
                           <select
                             value={row.shift_type || '昼'}
-                            onChange={(e) =>
-                              handleUpdateField(row.id, withStandardPrice(row, { shift_type: e.target.value }))
-                            }
+                            onChange={(e) => {
+                              const patch = { shift_type: e.target.value };
+                              handleUpdateField(row.id, patch);
+                              rememberSalesPrice(row, patch);
+                            }}
                             className="w-full h-11 px-2 bg-transparent font-bold text-center outline-none"
                           >
                             <option value="昼">昼</option>
@@ -1719,11 +1801,13 @@ export default function CraneProApp() {
                       <label className="block">
                         <span className="text-[11px] font-extrabold text-slate-500">庸車</span>
                         <NamePicker
+                          panel
                           value={row.supplier_name || ''}
+                          currentId={row.supplier_code || ''}
                           items={supplierItems}
                           title="庸車先を選ぶ"
                           disabled={hasOp && !hasSup}
-                          placeholder={hasOp ? '自社オペ中' : '名前・カナ・漢字・英字'}
+                          placeholder={hasOp ? '自社オペ中' : 'タップして選ぶ'}
                           onSelect={(name) => applySupplier(row, name)}
                           className={fieldClass}
                         />
@@ -1744,7 +1828,11 @@ export default function CraneProApp() {
                         <span className="text-[11px] font-extrabold text-slate-500">時間帯</span>
                         <select
                           value={row.shift_type || '昼'}
-                          onChange={(e) => handleUpdateField(row.id, withStandardPrice(row, { shift_type: e.target.value }))}
+                          onChange={(e) => {
+                            const patch = { shift_type: e.target.value };
+                            handleUpdateField(row.id, patch);
+                            rememberSalesPrice(row, patch);
+                          }}
                           className={fieldClass}
                         >
                           <option value="昼">昼</option>
@@ -1760,7 +1848,11 @@ export default function CraneProApp() {
                         items={modelItems}
                         title="機種を選ぶ"
                         placeholder="選ぶか、直接入力"
-                        onSelect={(name) => handleUpdateField(row.id, withStandardPrice(row, { requested_model: name }))}
+                        onSelect={(name) => {
+                          const patch = { requested_model: name };
+                          handleUpdateField(row.id, patch);
+                          rememberSalesPrice(row, patch);
+                        }}
                         className={fieldClass}
                       />
                     </label>
@@ -2028,7 +2120,7 @@ export default function CraneProApp() {
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <div>
                         <label className="block text-xs font-bold text-slate-600 mb-1">
-                          8時間基本単価（円）
+                          8時間基本単価（この得意先・機種の最新額）
                         </label>
                         <input
                           type="number"
@@ -2104,7 +2196,7 @@ export default function CraneProApp() {
                                 const next = [...extras];
                                 next[i] = { ...next[i], item_name: name };
                                 const hit = extraProducts.find((p) => p.name === name);
-                                if (hit?.unit_name && hit.unit_name !== 'h') next[i].unit = String(hit.unit_name);
+                                if (hit?.unit_name) next[i].unit = String(hit.unit_name);
                                 setExtras(next);
                               }}
                               onCreate={() => registerExtra(i)}
@@ -2283,10 +2375,12 @@ export default function CraneProApp() {
                     <div>
                       <label className="block text-xs font-bold text-slate-600 mb-1">庸車（仕入先）</label>
                       <NamePicker
+                        panel
                         value={selectedJob.supplier_name || ''}
+                        currentId={selectedJob.supplier_code || ''}
                         items={supplierItems}
                         title="庸車先を選ぶ"
-                        placeholder="名前・カナ・漢字・英字"
+                        placeholder="タップして選ぶ"
                         onSelect={(name) => {
                           const hit = customers.find(
                             (customer) => customer.name === name && String(customer.partner_type || '').includes('仕入')
