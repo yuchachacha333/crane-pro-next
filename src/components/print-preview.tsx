@@ -360,13 +360,29 @@ function FormPage({
         };
         if (item.kind === 'image') {
           // eslint-disable-next-line @next/next/no-img-element
-          return <img key={index} src={item.src} alt="" style={{ ...box, objectFit: 'contain' }} />;
+          return <img key={index} src={item.src} alt="" style={{ ...box, objectFit: 'contain', zIndex: 2 }} />;
+        }
+        if (item.kind === 'box') {
+          return (
+            <div
+              key={index}
+              style={{
+                ...box,
+                zIndex: 1,
+                boxSizing: 'border-box',
+                background: item.fill || 'transparent',
+                border: item.stroke ? `${item.strokeWidth || 1}px solid ${item.stroke}` : undefined,
+                borderRadius: item.radius ? `${item.radius}%` : undefined,
+              }}
+            />
+          );
         }
         return (
           <div
             key={index}
             style={{
               ...box,
+              zIndex: 3,
               boxSizing: 'border-box',
               padding: '2pt 7pt',
               overflow: 'hidden',

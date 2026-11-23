@@ -20,10 +20,14 @@ export type SheetCell = {
 };
 
 export type SheetDrawing = {
-  kind: 'image' | 'text';
+  kind: 'image' | 'text' | 'box';
   src: string;
   lines: string[];
   size: number;
+  stroke?: string;
+  strokeWidth?: number;
+  fill?: string;
+  radius?: number;
   x: number; // 表の幅に対する割合 0〜1
   w: number;
   y: number; // 表の上端からの pt
@@ -368,6 +372,7 @@ async function drawingsOf(zip: JSZip, layout: SheetLayout, fileName: string) {
       r2: to.row,
       ro2: to.rowOff,
     };
+    const paint = shapePaint(block);
     if (/<xdr:pic>/.test(block)) {
       const rid = block.match(/r:embed="([^"]+)"/)?.[1] || '';
       const target = targets[rid] || '';
@@ -394,12 +399,50 @@ async function drawingsOf(zip: JSZip, layout: SheetLayout, fileName: string) {
         decodeXml([...p.matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1]).join(''))
       );
       while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
-      if (!lines.length) continue;
       const size = Number(body.match(/\bsz="(\d+)"/)?.[1] || 1000) / 100;
-      out.push({ kind: 'text', src: '', lines, size, ...geometry });
+      if (!lines.length && !paint.stroke && !paint.fill) continue;
+      out.push({
+        kind: lines.length ? 'text' : 'box',
+        src: '',
+        lines,
+        size,
+        ...paint,
+        ...geometry,
+      });
     }
   }
   return out;
+}
+
+function schemeColor(value: string) {
+  if (value === 'tx1' || value === 'dk1') return '#000000';
+  if (value === 'bg1' || value === 'lt1') return '#ffffff';
+  return '';
+}
+
+function paintColor(xml: string) {
+  const rgb = xml.match(/srgbClr val="([0-9A-Fa-f]{6})"/);
+  if (rgb) return '#' + rgb[1];
+  const scheme = xml.match(/schemeClr val="([^"]+)"/);
+  return scheme ? schemeColor(scheme[1]) : '';
+}
+
+function shapePaint(block: string) {
+  const sp = block.match(/<xdr:spPr>([\s\S]*?)<\/xdr:spPr>/)?.[1] || '';
+  const body = sp.replace(/<a:ln\b[\s\S]*?<\/a:ln>/g, '');
+  const fillXml = body.match(/<a:solidFill>[\s\S]*?<\/a:solidFill>/)?.[0] || '';
+  const fill = /<a:noFill\/>/.test(body) ? '' : paintColor(fillXml);
+  const line = sp.match(/<a:ln\b([^>]*)>([\s\S]*?)<\/a:ln>/);
+  const lineXml = line?.[2] || '';
+  const width = line ? Number(line[1].match(/\bw="(\d+)"/)?.[1] || 0) : 0;
+  const stroke = line && !/<a:noFill\/>/.test(lineXml) && width > 0 ? paintColor(lineXml) || '#000000' : '';
+  const adj = Number(sp.match(/name="adj" fmla="val (\d+)"/)?.[1] || 0);
+  return {
+    stroke,
+    strokeWidth: stroke ? Math.max(1, width / 12700) : 0,
+    fill,
+    radius: adj ? Math.round(adj / 1000) : 0,
+  };
 }
 
 async function zipText(zip: JSZip, pattern: RegExp) {

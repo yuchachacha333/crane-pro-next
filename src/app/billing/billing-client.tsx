@@ -35,6 +35,7 @@ type Job = {
   start_time: string | null;
   end_time: string | null;
   work_hours: number | null;
+  shift_type?: string | null;
 };
 
 type ExtraRow = { name: string; quantity: number; unit: string; unit_price: number; amount: number };
@@ -55,9 +56,27 @@ function money(value: number): string {
 
 // 売上合計(total_sales_amount)は「基本＋付帯」で保存されるため、付帯を二重に足さない。
 // 基本は売上単価を優先し、無ければ合計から付帯を引いて求める。
-function priced(job: Job, extra: number) {
+function standardPrice(
+  models: { name: string; standard_price_a: number | null; night_standard_price: number | null }[],
+  modelName: string | null | undefined,
+  shift: string | null | undefined
+) {
+  const name = String(modelName || '').trim();
+  if (!name) return null;
+  const model = models.find((item) => String(item.name || '').trim() === name);
+  if (!model) return null;
+  const night = String(shift || '').includes('夜');
+  const nightPrice = Number(model.night_standard_price);
+  const dayPrice = Number(model.standard_price_a);
+  if (night && Number.isFinite(nightPrice) && nightPrice > 0) return nightPrice;
+  if (Number.isFinite(dayPrice) && dayPrice > 0) return dayPrice;
+  return null;
+}
+
+function priced(job: Job, extra: number, standard: number | null = null) {
   let base: number | null = null;
   if (job.unit_price != null && Number.isFinite(Number(job.unit_price))) base = Number(job.unit_price);
+  else if (standard != null) base = standard;
   else if (job.total_sales_amount != null && Number.isFinite(Number(job.total_sales_amount))) {
     base = Number(job.total_sales_amount) - extra;
   }
@@ -75,6 +94,7 @@ export default function BillingClient() {
   const [anchor, setAnchor] = useState('');
   const [close, setClose] = useState('');
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [models, setModels] = useState<{ name: string; standard_price_a: number | null; night_standard_price: number | null }[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [extras, setExtras] = useState<Record<string, ExtraRow[]>>({});
   const [detail, setDetail] = useState<{ code: string; mode: 'flat' | 'site' } | null>(null);
@@ -112,6 +132,11 @@ export default function BillingClient() {
         if (cancelled) return;
         if (queryError) setError(queryError.message);
         else setCustomers((data ?? []) as Customer[]);
+        const modelRes = await supabase
+          .from('machine_models')
+          .select('name, standard_price_a, night_standard_price')
+          .eq('company_id', id);
+        if (!cancelled && !modelRes.error) setModels(modelRes.data ?? []);
       })
       .catch((err: Error) => {
         if (!cancelled) setError(err.message || '会社マスタを読み込めません');
@@ -154,7 +179,7 @@ export default function BillingClient() {
     let cancelled = false;
     setLoading(true);
     const columns =
-      'id, work_date, customer_code, customer_name, site_name, client_job_code, contact_name, requested_model, operator_name, supplier_name, unit_price, total_sales_amount, notes, is_cancelled, start_time, end_time, work_hours';
+      'id, work_date, customer_code, customer_name, site_name, client_job_code, contact_name, requested_model, shift_type, operator_name, supplier_name, unit_price, total_sales_amount, notes, is_cancelled, start_time, end_time, work_hours';
     const loadJobs = (fields: string) =>
       supabase
         .from('dispatches')
@@ -243,7 +268,7 @@ export default function BillingClient() {
       }
       const extraLines = extras[job.id] ?? [];
       const extraTotal = extraLines.reduce((sum, line) => sum + line.amount, 0);
-      const price = priced(job, extraTotal);
+      const price = priced(job, extraTotal, standardPrice(models, job.requested_model, job.shift_type));
       const current = bucket.get(code) ?? {
         code,
         name: nameByCode.get(code) || job.customer_name || code,
@@ -278,7 +303,7 @@ export default function BillingClient() {
     });
     list.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
     return { groups: list, skipped: skippedCount };
-  }, [jobs, extras, close, closeByCode, nameByCode]);
+  }, [jobs, extras, close, closeByCode, nameByCode, models]);
 
   const total = groups.reduce((sum, group) => sum + group.amount, 0);
   const selected = detail ? groups.find((group) => group.code === detail.code) : undefined;
@@ -334,8 +359,8 @@ export default function BillingClient() {
   }
 
   function shownDay(value: string) {
-    const parts = String(value || '').match(/^\d{4}-(\d{2})-(\d{2})/);
-    return parts ? `${Number(parts[1])}/${Number(parts[2])}` : value;
+    const parts = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return parts ? `${parts[1]}/${parts[2]}/${parts[3]}` : value;
   }
 
   function postalOf(value: string | null | undefined) {
@@ -504,12 +529,9 @@ export default function BillingClient() {
 
         {selected ? (
           <section className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 border-b border-slate-100">
-              <button type="button" onClick={() => setDetail(null)} className="h-9 px-3 rounded-lg border border-slate-300 text-sm font-extrabold">
-                得意先一覧
-              </button>
+            <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-slate-100">
               {isSumitomoCustomer(selected.code) ? (
-                <p className="text-xs font-bold text-slate-600">工事コードごとの「この工事の請求書」から印刷します。</p>
+                <p className="text-xs font-bold text-slate-600">先頭の「この工事の請求書」から、工事コードごとに印刷します。</p>
               ) : (
                 <button
                   type="button"
@@ -519,6 +541,9 @@ export default function BillingClient() {
                   請求書を印刷
                 </button>
               )}
+              <button type="button" onClick={() => setDetail(null)} className="h-9 px-3 rounded-lg border border-slate-300 text-sm font-extrabold">
+                得意先一覧
+              </button>
             </div>
             <div className="px-4 py-3">
               <h2 className="text-xl font-extrabold">{selected.name}</h2>
@@ -546,16 +571,16 @@ export default function BillingClient() {
                         <React.Fragment key={`${site.jobCode}:${site.name}:${index}`}>
                           <tr className="border-t-2 border-slate-300 bg-slate-100">
                             <td colSpan={8} className="px-3 py-2 font-black">
-                              {siteHeading(site)}
                               {isSumitomoCustomer(selected.code) && (
                                 <button
                                   type="button"
                                   onClick={() => openSumitomo(selected, site, index)}
-                                  className="ml-3 h-8 rounded-lg bg-teal-700 px-3 text-xs font-extrabold text-white"
+                                  className="mr-3 h-8 rounded-lg bg-teal-700 px-3 text-xs font-extrabold text-white"
                                 >
                                   この工事の請求書
                                 </button>
                               )}
+                              {siteHeading(site)}
                             </td>
                             <td className="px-3 py-2 text-right whitespace-nowrap font-black">小計 {money(site.amount)}</td>
                             <td className="sticky right-0 bg-slate-100" />

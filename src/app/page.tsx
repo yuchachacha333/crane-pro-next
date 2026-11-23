@@ -423,7 +423,16 @@ export default function CraneProApp() {
 
   // 詳細モーダルを開く（付帯売上明細も取得）
   const openJobModal = async (job: DispatchRecord) => {
-    setSelectedJob({ ...job });
+    const opened = { ...job };
+    if (opened.unit_price == null) {
+      const standard = standardPrice(opened.requested_model || '', opened.shift_type || '');
+      if (standard != null) opened.unit_price = standard;
+    }
+    if (opened.purchase_amount == null && opened.supplier_name) {
+      const remembered = await latestPurchase(opened.supplier_code || '', opened.supplier_name);
+      if (remembered != null) opened.purchase_amount = remembered;
+    }
+    setSelectedJob(opened);
     setJobTab('sales');
     const { data } = await supabase
       .from('dispatch_extras')
@@ -826,6 +835,52 @@ export default function CraneProApp() {
           : {}),
     });
   };
+  const standardPrice = (modelName: string, shift: string) => {
+    const name = modelName.trim();
+    if (!name) return null;
+    const model = models.find((item) => String(item.name || '').trim() === name);
+    if (!model) return null;
+    const night = String(shift || '').includes('夜');
+    const nightPrice = Number(model.night_standard_price);
+    const dayPrice = Number(model.standard_price_a);
+    if (night && Number.isFinite(nightPrice) && nightPrice > 0) return nightPrice;
+    if (Number.isFinite(dayPrice) && dayPrice > 0) return dayPrice;
+    return null;
+  };
+  const withStandardPrice = (row: DispatchRecord, patch: Partial<DispatchRecord>) => {
+    const next = { ...row, ...patch };
+    const nextPrice = standardPrice(next.requested_model || '', next.shift_type || '');
+    const previousPrice = standardPrice(row.requested_model || '', row.shift_type || '');
+    const empty = row.unit_price == null;
+    const followedMaster = previousPrice != null && Number(row.unit_price) === previousPrice;
+    if (nextPrice != null && (empty || followedMaster)) patch.unit_price = nextPrice;
+    return patch;
+  };
+  const latestPurchase = async (supplierCode: string, supplierName: string) => {
+    let query = supabase
+      .from('dispatches')
+      .select('purchase_amount')
+      .not('purchase_amount', 'is', null)
+      .order('work_date', { ascending: false })
+      .limit(1);
+    query = supplierCode ? query.eq('supplier_code', supplierCode) : query.eq('supplier_name', supplierName);
+    const { data, error } = await query;
+    if (error || data?.[0]?.purchase_amount == null) return null;
+    const amount = Number(data[0].purchase_amount);
+    return Number.isFinite(amount) ? amount : null;
+  };
+  const rememberPurchase = (row: DispatchRecord, supplierCode: string, supplierName: string) => {
+    if (!supplierName || row.purchase_amount != null) return;
+    void latestPurchase(supplierCode, supplierName).then((amount) => {
+      if (amount == null) return;
+      setDispatches((prev) => {
+        const current = prev.find((item) => item.id === row.id);
+        if (!current || current.supplier_name !== supplierName || current.purchase_amount != null) return prev;
+        return prev.map((item) => (item.id === row.id ? { ...item, purchase_amount: amount } : item));
+      });
+      void supabase.from('dispatches').update({ purchase_amount: amount }).eq('id', row.id);
+    });
+  };
   const applySupplier = (row: DispatchRecord, val: string) => {
     const hit = customers.find(
       (customer) => customer.name === val && String(customer.partner_type || '').includes('仕入')
@@ -841,6 +896,7 @@ export default function CraneProApp() {
           ? { operator_name: '', operator_code: '' }
           : { supplier_code: '' }),
     });
+    if (val) rememberPurchase(row, hit?.code || '', val);
   };
   const commitSite = (row: DispatchRecord, value: string, site?: (typeof sites)[number]) => {
     const customer = site?.customer_name
@@ -1396,7 +1452,7 @@ export default function CraneProApp() {
                             items={modelItems}
                             title="機種を選ぶ"
                             placeholder="選ぶか、直接入力"
-                            onSelect={(name) => handleUpdateField(row.id, { requested_model: name })}
+                            onSelect={(name) => handleUpdateField(row.id, withStandardPrice(row, { requested_model: name }))}
                             className={`w-full h-9 px-2 rounded-lg border font-extrabold text-xs outline-none focus:ring-2 focus:ring-teal-600 ${badgeColor}`}
                           />
                         </td>
@@ -1406,7 +1462,7 @@ export default function CraneProApp() {
                           <select
                             value={row.shift_type || '昼'}
                             onChange={(e) =>
-                              handleUpdateField(row.id, { shift_type: e.target.value })
+                              handleUpdateField(row.id, withStandardPrice(row, { shift_type: e.target.value }))
                             }
                             className="w-full h-11 px-2 bg-transparent font-bold text-center outline-none"
                           >
@@ -1688,7 +1744,7 @@ export default function CraneProApp() {
                         <span className="text-[11px] font-extrabold text-slate-500">時間帯</span>
                         <select
                           value={row.shift_type || '昼'}
-                          onChange={(e) => handleUpdateField(row.id, { shift_type: e.target.value })}
+                          onChange={(e) => handleUpdateField(row.id, withStandardPrice(row, { shift_type: e.target.value }))}
                           className={fieldClass}
                         >
                           <option value="昼">昼</option>
@@ -1704,7 +1760,7 @@ export default function CraneProApp() {
                         items={modelItems}
                         title="機種を選ぶ"
                         placeholder="選ぶか、直接入力"
-                        onSelect={(name) => handleUpdateField(row.id, { requested_model: name })}
+                        onSelect={(name) => handleUpdateField(row.id, withStandardPrice(row, { requested_model: name }))}
                         className={fieldClass}
                       />
                     </label>
@@ -2235,22 +2291,33 @@ export default function CraneProApp() {
                           const hit = customers.find(
                             (customer) => customer.name === name && String(customer.partner_type || '').includes('仕入')
                           );
-                          setSelectedJob({
+                          const next = {
                             ...selectedJob,
                             supplier_name: name,
                             supplier_code: hit?.code || '',
                             supplier_contact_code: '',
                             supplier_contact_name: '',
                             supplier_contact_tel: '',
-                            ...(name ? { operator_name: '', operator_code: '' } : {}),
-                          });
+                            ...(name ? { operator_name: '', operator_code: '' } : { purchase_amount: null }),
+                          };
+                          setSelectedJob(next);
+                          if (name && selectedJob.purchase_amount == null) {
+                            void latestPurchase(hit?.code || '', name).then((amount) => {
+                              if (amount == null) return;
+                              setSelectedJob((current) =>
+                                current && current.id === selectedJob.id && current.supplier_name === name && current.purchase_amount == null
+                                  ? { ...current, purchase_amount: amount }
+                                  : current
+                              );
+                            });
+                          }
                         }}
                         className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold"
                       />
                     </div>
                     {selectedJob.supplier_name && (
                       <div>
-                        <label className="block text-xs font-bold text-slate-600 mb-1">仕入金額（庸車先への支払・税抜）</label>
+                        <label className="block text-xs font-bold text-slate-600 mb-1">仕入金額（税抜・この仕入先の最新額）</label>
                         <input
                           type="number"
                           inputMode="numeric"
