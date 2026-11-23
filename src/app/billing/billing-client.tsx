@@ -104,6 +104,7 @@ export default function BillingClient() {
   const [anchor, setAnchor] = useState('');
   const [close, setClose] = useState('');
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [contactNames, setContactNames] = useState<Record<string, string[]>>({});
   const [models, setModels] = useState<
     { name: string; standard_price_a: number | null; night_standard_price: number | null; unit_name?: string | null }[]
   >([]);
@@ -145,6 +146,19 @@ export default function BillingClient() {
         if (cancelled) return;
         if (queryError) setError(queryError.message);
         else setCustomers((data ?? []) as Customer[]);
+        const contactRes = await supabase
+          .from('customer_contacts')
+          .select('customer_code, name')
+          .eq('company_id', id);
+        if (!cancelled && !contactRes.error) {
+          const byCustomer: Record<string, string[]> = {};
+          for (const row of contactRes.data ?? []) {
+            const code = String(row.customer_code || '').trim();
+            const name = String(row.name || '').replace(/様$/, '').trim();
+            if (code && name) (byCustomer[code] ??= []).push(name);
+          }
+          setContactNames(byCustomer);
+        }
         const modelRes = await supabase
           .from('machine_models')
           .select('name, standard_price_a, night_standard_price, unit_name')
@@ -328,6 +342,7 @@ export default function BillingClient() {
     const list = [...bucket.values()].map((group) => {
       const byJobCode = isSumitomoCustomer(group.code);
       const sites = new Map<string, SiteGroup>();
+      group.jobs.sort((a, b) => a.work_date.localeCompare(b.work_date) || (a.start_time || '').localeCompare(b.start_time || ''));
       for (const job of group.jobs) {
         const jobCode = String(job.client_job_code || '').trim();
         const name = job.site_name || '現場未入力';
@@ -462,9 +477,9 @@ export default function BillingClient() {
       address: [party?.address1, party?.address2].filter(Boolean).join(' '),
       lines: [],
       sumitomo: {
-        contact: pickContact(site.jobs),
+        contact: pickContact(site.jobs) || (contactNames[group.code] || [])[0] || '',
         quoteNo: `${month}-${String(index + 1).padStart(2, '0')}`,
-        jobCode: site.jobCode,
+        jobCode: [site.name !== '現場未入力' ? site.name : '', site.jobCode].filter(Boolean).join('　'),
         lines,
       },
     });

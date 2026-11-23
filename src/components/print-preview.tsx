@@ -451,13 +451,28 @@ function FormPage({
           );
           if (owner) fitHeight = fitted(owner);
         }
-        const boxHeight = boxes[index] && fitHeight ? Math.min(boxes[index].height, fitHeight) : boxes[index]?.height;
+        // 文字の枠と罫線の枠は別々に保存されていて少しずれるので、文字は罫線の枠に重ねる
+        let geoIndex = index;
+        if (item.kind === 'text') {
+          const frame = all.findIndex(
+            (other) =>
+              other.kind === 'box' &&
+              Boolean(other.stroke) &&
+              Math.abs(other.x - item.x) < 0.03 &&
+              Math.abs(other.r1 - item.r1) <= 1 &&
+              Math.abs(other.r2 - item.r2) <= 1
+          );
+          if (frame >= 0) geoIndex = frame;
+        }
+        const geo = all[geoIndex];
+        const geoBox = boxes[geoIndex];
+        const boxHeight = geoBox && fitHeight ? Math.min(geoBox.height, fitHeight) : geoBox?.height;
         const box: CSSProperties = {
           position: 'absolute',
-          left: `${(item.kind === 'image' && imageLeft[index] != null ? imageLeft[index] : item.x) * 100}%`,
-          width: `${item.w * 100}%`,
-          top: boxes[index] ? `${boxes[index].top}px` : `${(item.y * scale) / 100}pt`,
-          height: boxHeight != null ? `${boxHeight}px` : `${(item.h * scale) / 100}pt`,
+          left: `${(item.kind === 'image' && imageLeft[index] != null ? imageLeft[index] : geo.x) * 100}%`,
+          width: `${geo.w * 100}%`,
+          top: geoBox ? `${geoBox.top}px` : `${(geo.y * scale) / 100}pt`,
+          height: boxHeight != null ? `${boxHeight}px` : `${(geo.h * scale) / 100}pt`,
           pointerEvents: 'none',
         };
         if (item.kind === 'image') {

@@ -138,6 +138,11 @@ export function fillInvoiceLayout(
       if (!cell) continue;
       const value = line[field];
       cell.text = value == null || value === '' ? '' : field === 'price' || field === 'amount' ? comma(Number(value)) : String(value);
+      cell.bold = true;
+      if (field === 'qty' || field === 'price' || field === 'amount') {
+        cell.align = 'right';
+        cell.wrap = false;
+      }
       if (field === 'site' && cell.text.includes('\n')) {
         cell.wrap = true;
         row.height = Math.max(Number(row.height) || 18, 32);
@@ -184,7 +189,15 @@ export function fillInvoiceLayout(
     const value = summaryValue(kind);
     if (value == null) continue;
     for (const cell of row.cells) {
-      if (moneyText(cell.text) || cell.formula) cell.text = (kind === 'bill' ? '¥' : '') + comma(value);
+      if (moneyText(cell.text) || cell.formula) {
+        cell.text = `¥${comma(value)}`;
+        if (kind !== 'bill') {
+          cell.align = 'right';
+          cell.wrap = false;
+        }
+        cell.bold = true;
+        cell.formula = false;
+      }
     }
   }
   return { layout, omitted: Math.max(0, lines.length - slots.length), warning: '' };
