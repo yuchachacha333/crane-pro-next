@@ -31,6 +31,7 @@ export default function ContactRegisterDialog({ companyId, draft, onClose, onCre
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
   const [tel, setTel] = useState('');
+  const [email, setEmail] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -62,6 +63,7 @@ export default function ContactRegisterDialog({ companyId, draft, onClose, onCre
       code: personCode,
       name: personName,
       tel: tel.trim() || null,
+      email: email.trim() || null,
       customer_code: draft.customerCode || null,
       customer_name: draft.customerName || null,
     };
@@ -72,7 +74,8 @@ export default function ContactRegisterDialog({ companyId, draft, onClose, onCre
       .single();
     setSaving(false);
     if (saveError || !data) {
-      setError(saveError?.message || '担当者を保存できません');
+      const message = saveError?.message || '担当者を保存できません';
+      setError(/email/i.test(message) ? 'メールアドレスを保存するには、Supabaseで supabase/customer_contact_email.sql を実行してください' : message);
       return;
     }
     onCreated({
@@ -109,6 +112,10 @@ export default function ContactRegisterDialog({ companyId, draft, onClose, onCre
         <label className="block mt-3 text-xs font-extrabold text-slate-600">
           携帯番号
           <input value={tel} onChange={(event) => setTel(event.target.value)} className="mt-1 w-full h-11 rounded-xl border border-slate-300 px-3 font-bold" />
+        </label>
+        <label className="block mt-3 text-xs font-extrabold text-slate-600">
+          メールアドレス
+          <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="mt-1 w-full h-11 rounded-xl border border-slate-300 px-3 font-bold" />
         </label>
         {error && <p className="mt-3 text-sm font-bold text-rose-700">{error}</p>}
         <div className="mt-5 flex justify-end gap-2">

@@ -128,15 +128,16 @@ export const MASTER_FORMS: MasterDefinition[] = [
   {
     table: 'customer_contacts',
     title: '担当者',
-    blurb: '得意先ごとの担当者名と携帯番号',
-    searchHint: '担当者名、得意先、電話',
+    blurb: '得意先ごとの担当者名、携帯番号、メールアドレス',
+    searchHint: '担当者名、得意先、電話、メール',
     requireQuery: false,
-    searchColumns: ['code', 'name', 'customer_code', 'customer_name', 'tel'],
+    searchColumns: ['code', 'name', 'customer_code', 'customer_name', 'tel', 'email'],
     listColumns: [
       { key: 'code', label: 'コード' },
       { key: 'name', label: '担当者名' },
       { key: 'customer_name', label: '得意先' },
       { key: 'tel', label: '携帯番号' },
+      { key: 'email', label: 'メールアドレス' },
     ],
     groups: [
       {
@@ -147,6 +148,7 @@ export const MASTER_FORMS: MasterDefinition[] = [
           text('customer_name', '得意先名'),
           text('name', '担当者名', true),
           text('tel', '携帯番号'),
+          text('email', 'メールアドレス'),
         ],
       },
     ],

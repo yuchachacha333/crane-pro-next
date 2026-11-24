@@ -1,12 +1,14 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Pencil } from 'lucide-react';
 import AppSidebar from '@/components/app-sidebar';
 import InvoicePreview from '@/components/invoice-preview';
 import { billingPeriod, closeKeyOf, closeLabel } from '@/lib/billing';
 import { formatJapaneseMonthDay, getTodayIso } from '@/lib/crane-utils';
 import { isSumitomoCustomer, type InvoiceLine, type SumitomoLine } from '@/lib/invoice-sheet';
+import { invoiceTemplateFor } from '@/lib/invoice-templates';
 import { getDefaultCompanyId, supabase } from '@/lib/supabase';
 
 type Customer = {
@@ -53,6 +55,45 @@ type Group = {
 
 function money(value: number): string {
   return `¥${Math.round(value).toLocaleString('ja-JP')}`;
+}
+
+const MAIL_RULE = '▲'.repeat(23);
+
+function bytesToBase64(bytes: Uint8Array) {
+  let text = '';
+  const size = 0x8000;
+  for (let index = 0; index < bytes.length; index += size) {
+    text += String.fromCharCode(...bytes.subarray(index, index + size));
+  }
+  return btoa(text);
+}
+
+function siteLabelOf(group: Group) {
+  const names = [...new Set(group.sites.map((site) => site.name.trim()).filter((name) => name && name !== '現場未入力'))];
+  return names.length ? names.join('、') : '現場';
+}
+
+function satsumaMail(person: string, site: string, month: number) {
+  const name = person.replace(/様$/, '').trim() || 'ご担当者';
+  return {
+    subject: `${month}月分請求書　山科重機工業`,
+    body: [
+      '薩摩建設株式会社',
+      `${name}様`,
+      '',
+      'いつも大変お世話になっております。',
+      `${site}の${month}月分請求書を添付させていただきます。`,
+      'ご確認の程よろしくお願いいたします。',
+      '',
+      MAIL_RULE,
+      '〒273-0112　千葉県鎌ケ谷市東中沢3-3-73',
+      '山科重機工業有限会社',
+      'E-mail   yamashina@cr-yjk.jp',
+      'TEL 047-446-6549   FAX 047-498-9461',
+      MAIL_RULE,
+    ].join('\r\n'),
+    fileName: `${month}月分請求書.pdf`,
+  };
 }
 
 // 売上合計(total_sales_amount)は「基本＋付帯」で保存されるため、付帯を二重に足さない。
@@ -120,7 +161,11 @@ export default function BillingClient() {
     sumitomo?: { contact: string; quoteNo: string; jobCode: string; lines: SumitomoLine[] };
   } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [pdfMode, setPdfMode] = useState<'print' | 'mail' | null>(null);
+  const [printUrl, setPrintUrl] = useState<string | null>(null);
+  const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
+  const pdfLock = useRef(false);
 
   // 訂正処理から戻ってきた時は、同じ基準日・締め・得意先ページを開く
   useEffect(() => {
@@ -375,6 +420,116 @@ export default function BillingClient() {
     return line.unit || extraUnits[line.name] || '';
   }
 
+  const helperDown = 'このパソコンで請求PDFが起動していません。Excelの入った会社のパソコンで scripts\\start-invoice-pdf.cmd を開いてから、もう一度押してください。';
+
+  async function loadTemplateWorkbook(group: Group) {
+    if (!period) throw new Error('対象期間がありません');
+    const params = new URLSearchParams({ code: group.code, start: period.start, end: period.end });
+    const response = await fetch(`/api/invoices/xlsx?${params}`);
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(body?.error || '請求書を作れませんでした');
+    }
+    return {
+      workbook: await response.blob(),
+      staff: decodeURIComponent(response.headers.get('X-Invoice-Staff') || ''),
+      email: decodeURIComponent(response.headers.get('X-Invoice-Email') || ''),
+    };
+  }
+
+  async function convertWorkbook(workbook: Blob) {
+    let pdfResponse: Response;
+    try {
+      pdfResponse = await fetch('http://127.0.0.1:3100/convert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+        body: workbook,
+      });
+    } catch {
+      throw new Error(helperDown);
+    }
+    if (!pdfResponse.ok) throw new Error((await pdfResponse.text()) || 'PDFを作れませんでした');
+    return pdfResponse.blob();
+  }
+
+  function closePrintPreview() {
+    setPrintUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return null;
+    });
+  }
+
+  function printPreview() {
+    if (!printUrl) return;
+    const popup = window.open(printUrl, 'satsuma-print');
+    if (!popup) {
+      setError('印刷画面を開けませんでした。ブラウザのポップアップを許可してください。');
+      return;
+    }
+    window.setTimeout(() => {
+      popup.focus();
+      popup.print();
+    }, 700);
+  }
+
+  async function printTemplate(group: Group) {
+    if (!period || pdfLock.current) return;
+    pdfLock.current = true;
+    setPdfMode('print');
+    setError('');
+    setNotice('');
+    try {
+      const { workbook } = await loadTemplateWorkbook(group);
+      const pdf = await convertWorkbook(workbook);
+      const url = URL.createObjectURL(pdf);
+      setPrintUrl((current) => {
+        if (current) URL.revokeObjectURL(current);
+        return url;
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'PDFを作れませんでした');
+    } finally {
+      pdfLock.current = false;
+      setPdfMode(null);
+    }
+  }
+
+  async function mailTemplate(group: Group) {
+    if (!period || pdfLock.current) return;
+    pdfLock.current = true;
+    setPdfMode('mail');
+    setError('');
+    setNotice('');
+    try {
+      const { workbook, staff, email } = await loadTemplateWorkbook(group);
+      const month = Number(period.end.slice(5, 7));
+      const mail = satsumaMail(staff, siteLabelOf(group), month);
+      const xlsx = bytesToBase64(new Uint8Array(await workbook.arrayBuffer()));
+      let response: Response;
+      try {
+        response = await fetch('http://127.0.0.1:3100/mail', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ xlsx, subject: mail.subject, body: mail.body, fileName: mail.fileName, to: email }),
+          signal: AbortSignal.timeout(120000),
+        });
+      } catch (err) {
+        const name = err instanceof DOMException ? err.name : '';
+        if (name === 'TimeoutError' || name === 'AbortError') {
+          throw new Error('メールの作成に時間がかかりすぎました。もう一度押してください。');
+        }
+        throw new Error(helperDown);
+      }
+      if (!response.ok) throw new Error((await response.text()) || 'メールを開けませんでした');
+      setNotice('Outlookに下書きを開きました。宛先・本文・添付を確認してから送信してください。送信はまだされていません。');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'メールを開けませんでした');
+    } finally {
+      pdfLock.current = false;
+      setPdfMode(null);
+    }
+  }
+
   function openInvoice(group: Group) {
     const party = customers.find((customer) => customer.code === group.code);
     const lines: InvoiceLine[] = group.jobs.flatMap((job) => {
@@ -581,6 +736,7 @@ export default function BillingClient() {
           </p>
         )}
         {error && <p className="mb-4 text-sm font-bold text-rose-700">{error}</p>}
+        {notice && <p className="mb-4 text-sm font-bold text-teal-800">{notice}</p>}
         {loading && <p className="text-sm font-bold text-slate-500">集計しています...</p>}
 
         {!loading && groups.length === 0 && (
@@ -594,6 +750,25 @@ export default function BillingClient() {
             <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-slate-100">
               {isSumitomoCustomer(selected.code) ? (
                 <p className="text-xs font-bold text-slate-600">先頭の「この工事の請求書」から、工事コードごとに印刷します。</p>
+              ) : invoiceTemplateFor(selected.name, selected.code) ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={pdfMode !== null}
+                    onClick={() => printTemplate(selected)}
+                    className="h-9 px-3 rounded-lg bg-slate-900 text-white text-sm font-extrabold disabled:opacity-60"
+                  >
+                    {pdfMode === 'print' ? '用紙を作成中' : '指定用紙を印刷'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={pdfMode !== null}
+                    onClick={() => mailTemplate(selected)}
+                    className="h-9 px-3 rounded-lg bg-teal-700 text-white text-sm font-extrabold disabled:opacity-60"
+                  >
+                    {pdfMode === 'mail' ? 'メールを作成中' : '請求書をメールで送信'}
+                  </button>
+                </>
               ) : (
                 <button
                   type="button"
@@ -705,6 +880,24 @@ export default function BillingClient() {
           </p>
         )}
       </main>
+      {printUrl &&
+        createPortal(
+          <div className="fixed inset-0 z-[200] flex flex-col bg-slate-900 p-3 sm:p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-extrabold text-white">内容を確認してから、印刷してください。</p>
+              <div className="flex gap-2">
+                <button type="button" onClick={printPreview} className="h-10 px-4 rounded-lg bg-white text-sm font-extrabold text-slate-900">
+                  印刷する
+                </button>
+                <button type="button" onClick={closePrintPreview} className="h-10 px-4 rounded-lg border border-white/40 text-sm font-extrabold text-white">
+                  閉じる
+                </button>
+              </div>
+            </div>
+            <iframe title="指定用紙の確認" src={printUrl} className="min-h-0 flex-1 rounded-xl bg-white" />
+          </div>,
+          document.body
+        )}
       {invoice && (
         <InvoicePreview
           customer={{ name: invoice.name, postal: invoice.postal, address: invoice.address }}

@@ -175,6 +175,7 @@ const TABLES: TableDef[] = [
       { column: 'customer_name', type: 'text', headers: ['得意先名', 'customer_name'] },
       { column: 'name', type: 'text', headers: ['担当者名', 'name'] },
       { column: 'tel', type: 'text', headers: ['電話番号', '携帯番号', 'tel'] },
+      { column: 'email', type: 'text', headers: ['メールアドレス', 'email', 'E-mail', 'Eメール'] },
     ],
   },
 ];

@@ -259,9 +259,11 @@ export default function MastersClient() {
           ? '同じコードがすでにあります'
           : /latitude|longitude/.test(saveError.message)
             ? '緯度・経度の列がまだありません。SupabaseのSQLエディタで supabase/customer_coordinates.sql を実行してください'
-            : /unit_name/i.test(saveError.message)
+              : /unit_name/i.test(saveError.message)
               ? '単位を保存するには、Supabaseで supabase/machine_model_unit.sql を実行してください'
-              : saveError.message
+              : master.table === 'customer_contacts' && /email/i.test(saveError.message)
+                ? 'メールアドレスを保存するには、Supabaseで supabase/customer_contact_email.sql を実行してください'
+                : saveError.message
       );
       return;
     }
@@ -435,7 +437,7 @@ export default function MastersClient() {
                               />
                             ) : (
                               <input
-                                type={field.kind === 'date' ? 'date' : 'text'}
+                                type={field.kind === 'date' ? 'date' : field.key === 'email' ? 'email' : 'text'}
                                 value={draft[field.key] || ''}
                                 onChange={(event) => {
                                   const value = event.target.value;
