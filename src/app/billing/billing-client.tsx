@@ -1,14 +1,15 @@
 'use client';
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { Pencil } from 'lucide-react';
 import AppSidebar from '@/components/app-sidebar';
 import InvoicePreview from '@/components/invoice-preview';
+import TemplateInvoice from '@/components/template-invoice';
 import { billingPeriod, closeKeyOf, closeLabel } from '@/lib/billing';
 import { formatJapaneseMonthDay, getTodayIso } from '@/lib/crane-utils';
 import { isSumitomoCustomer, type InvoiceLine, type SumitomoLine } from '@/lib/invoice-sheet';
 import { invoiceTemplateFor } from '@/lib/invoice-templates';
+import type { SheetLayout } from '@/lib/sheet-layout';
 import { getDefaultCompanyId, supabase } from '@/lib/supabase';
 
 type Customer = {
@@ -158,11 +159,9 @@ export default function BillingClient() {
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [pdfMode, setPdfMode] = useState<'print' | 'mail' | null>(null);
-  const [printUrl, setPrintUrl] = useState<string | null>(null);
+  const [sheet, setSheet] = useState<{ layouts: SheetLayout[]; title: string; gmail?: { href: string; popup: Window | null } } | null>(null);
   const [notice, setNotice] = useState('');
-  const [gmailHref, setGmailHref] = useState('');
   const [error, setError] = useState('');
-  const [helperMissing, setHelperMissing] = useState(false);
   const pdfLock = useRef(false);
 
   // 訂正処理から戻ってきた時は、同じ基準日・締め・得意先ページを開く
@@ -418,65 +417,15 @@ export default function BillingClient() {
     return line.unit || extraUnits[line.name] || '';
   }
 
-  function helperMissingError() {
-    const error = new Error('このパソコンで請求PDFの受付が動いていません。下のプログラムを保存して解凍し、start-invoice-pdf.cmd を開いたまま、もう一度押してください。Excelが必要です。');
-    error.name = 'HelperMissingError';
-    return error;
-  }
-
-  async function loadTemplateWorkbook(group: Group) {
+  async function loadTemplateLayouts(group: Group) {
     if (!period) throw new Error('対象期間がありません');
     const params = new URLSearchParams({ code: group.code, start: period.start, end: period.end });
-    const response = await fetch(`/api/invoices/xlsx?${params}`);
+    const response = await fetch(`/api/invoices/layout?${params}`);
     if (!response.ok) {
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       throw new Error(body?.error || '請求書を作れませんでした');
     }
-    return {
-      workbook: await response.blob(),
-      staff: decodeURIComponent(response.headers.get('X-Invoice-Staff') || ''),
-      email: decodeURIComponent(response.headers.get('X-Invoice-Email') || ''),
-    };
-  }
-
-  async function convertWorkbook(workbook: Blob) {
-    let pdfResponse: Response;
-    try {
-      pdfResponse = await fetch('http://127.0.0.1:3100/convert', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
-        body: workbook,
-        signal: AbortSignal.timeout(60000),
-      });
-    } catch (err) {
-      const name = err instanceof DOMException ? err.name : '';
-      if (name === 'TimeoutError' || name === 'AbortError') {
-        throw new Error('Excelが応答しませんでした。受付の窓を一度閉じて start-invoice-pdf.cmd を開き直してから、もう一度押してください。');
-      }
-      throw helperMissingError();
-    }
-    if (!pdfResponse.ok) throw new Error((await pdfResponse.text()) || 'PDFを作れませんでした');
-    return pdfResponse.blob();
-  }
-
-  function closePrintPreview() {
-    setPrintUrl((current) => {
-      if (current) URL.revokeObjectURL(current);
-      return null;
-    });
-  }
-
-  function printPreview() {
-    if (!printUrl) return;
-    const popup = window.open(printUrl, 'satsuma-print');
-    if (!popup) {
-      setError('印刷画面を開けませんでした。ブラウザのポップアップを許可してください。');
-      return;
-    }
-    window.setTimeout(() => {
-      popup.focus();
-      popup.print();
-    }, 700);
+    return (await response.json()) as { layouts: SheetLayout[]; staff: string; email: string };
   }
 
   async function printTemplate(group: Group) {
@@ -485,21 +434,12 @@ export default function BillingClient() {
     setPdfMode('print');
     setError('');
     setNotice('');
-    setHelperMissing(false);
-    setGmailHref('');
     try {
-      const { workbook } = await loadTemplateWorkbook(group);
-      const pdf = await convertWorkbook(workbook);
+      const { layouts } = await loadTemplateLayouts(group);
       const month = Number(period.end.slice(5, 7));
-      const file = new File([pdf], invoicePdfName(siteLabelOf(group), month), { type: 'application/pdf' });
-      const url = URL.createObjectURL(file);
-      setPrintUrl((current) => {
-        if (current) URL.revokeObjectURL(current);
-        return url;
-      });
+      setSheet({ layouts, title: invoicePdfName(siteLabelOf(group), month).replace(/\.pdf$/, '') });
     } catch (err) {
-      if (err instanceof Error && err.name === 'HelperMissingError') setHelperMissing(true);
-      setError(err instanceof Error ? err.message : 'PDFを作れませんでした');
+      setError(err instanceof Error ? err.message : '請求書を作れませんでした');
     } finally {
       pdfLock.current = false;
       setPdfMode(null);
@@ -513,11 +453,8 @@ export default function BillingClient() {
     setPdfMode('mail');
     setError('');
     setNotice('');
-    setHelperMissing(false);
-    setGmailHref('');
     try {
-      const { workbook, staff, email } = await loadTemplateWorkbook(group);
-      const pdf = await convertWorkbook(workbook);
+      const { layouts, staff, email } = await loadTemplateLayouts(group);
       const month = Number(period.end.slice(5, 7));
       const mail = satsumaMail(staff, siteLabelOf(group), month);
       const gmail = new URL('https://mail.google.com/mail/');
@@ -527,26 +464,13 @@ export default function BillingClient() {
       if (email) gmail.searchParams.set('to', email);
       gmail.searchParams.set('su', mail.subject);
       gmail.searchParams.set('body', mail.body);
-      const href = gmail.toString();
-      const opened = Boolean(popup && !popup.closed);
-      if (opened && popup) popup.location.href = href;
-      setGmailHref(href);
-      const url = URL.createObjectURL(pdf);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = mail.fileName;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1500);
-      setNotice(
-        opened
-          ? 'Gmailを開きました。保存されたPDFを、そのメールに添付してから送信してください。'
-          : 'PDFを保存しました。下のリンクからGmailを開き、そのPDFを添付してから送信してください。'
-      );
+      setSheet({
+        layouts,
+        title: mail.fileName.replace(/\.pdf$/, ''),
+        gmail: { href: gmail.toString(), popup },
+      });
     } catch (err) {
       popup?.close();
-      if (err instanceof Error && err.name === 'HelperMissingError') setHelperMissing(true);
       setError(err instanceof Error ? err.message : 'メールを開けませんでした');
     } finally {
       pdfLock.current = false;
@@ -759,29 +683,8 @@ export default function BillingClient() {
             {groups.length}社　合計 {money(total)}
           </p>
         )}
-        {error && (
-          <div className="mb-4 text-sm font-bold text-rose-700">
-            <p>{error}</p>
-            {helperMissing && (
-              <a href="/api/invoices/helper" className="mt-2 inline-flex h-10 items-center rounded-lg bg-slate-900 px-3 text-white">
-                受付プログラムをダウンロード
-              </a>
-            )}
-          </div>
-        )}
-        {notice && (
-          <p className="mb-4 text-sm font-bold text-teal-800">
-            {notice}
-            {gmailHref && (
-              <>
-                {' '}
-                <a href={gmailHref} target="_blank" rel="noopener noreferrer" className="underline">
-                  Gmailを開く
-                </a>
-              </>
-            )}
-          </p>
-        )}
+        {error && <p className="mb-4 text-sm font-bold text-rose-700">{error}</p>}
+        {notice && <p className="mb-4 text-sm font-bold text-teal-800">{notice}</p>}
         {loading && <p className="text-sm font-bold text-slate-500">集計しています...</p>}
 
         {!loading && groups.length === 0 && (
@@ -925,24 +828,14 @@ export default function BillingClient() {
           </p>
         )}
       </main>
-      {printUrl &&
-        createPortal(
-          <div className="fixed inset-0 z-[200] flex flex-col bg-slate-900 p-3 sm:p-4">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-extrabold text-white">内容を確認してから、印刷してください。</p>
-              <div className="flex gap-2">
-                <button type="button" onClick={printPreview} className="h-10 px-4 rounded-lg bg-white text-sm font-extrabold text-slate-900">
-                  印刷する
-                </button>
-                <button type="button" onClick={closePrintPreview} className="h-10 px-4 rounded-lg border border-white/40 text-sm font-extrabold text-white">
-                  閉じる
-                </button>
-              </div>
-            </div>
-            <iframe title="指定用紙の確認" src={printUrl} className="min-h-0 flex-1 rounded-xl bg-white" />
-          </div>,
-          document.body
-        )}
+      {sheet && (
+        <TemplateInvoice
+          layouts={sheet.layouts}
+          title={sheet.title}
+          gmail={sheet.gmail}
+          onClose={() => setSheet(null)}
+        />
+      )}
       {invoice && (
         <InvoicePreview
           customer={{ name: invoice.name, postal: invoice.postal, address: invoice.address }}

@@ -3,6 +3,7 @@ import { InvoiceFitError } from '@/lib/invoice-fit';
 import { loadInvoiceDraft } from '@/lib/invoice-data';
 import { buildInvoiceXlsx } from '@/lib/invoice-excel';
 import { invoiceTemplateFor } from '@/lib/invoice-templates';
+import { layoutsFromXlsx } from '@/lib/sheet-layout';
 import { getDefaultCompanyId, supabase } from '@/lib/supabase';
 
 function sameCode(left: string, right: string) {
@@ -34,15 +35,22 @@ export async function GET(request: Request) {
       return Response.json({ error: 'この期間の配車がありません' }, { status: 404 });
     }
     const xlsx = await buildInvoiceXlsx(template, draft);
-    return new Response(new Uint8Array(xlsx), {
-      headers: {
-        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'Cache-Control': 'no-store',
-        'X-Invoice-Staff': encodeURIComponent(draft.staffName),
-        'X-Invoice-Email': encodeURIComponent(draft.staffEmail),
-        'X-Invoice-Project': encodeURIComponent(draft.projectName),
-      },
+    const { cells, lines } = template;
+    const money: string[] = [];
+    if (lines.columns.amount) {
+      for (let index = 0; index < lines.pageSize; index += 1) {
+        money.push(`${lines.columns.amount.column}${lines.startRow + index}`);
+      }
+    }
+    for (const cell of [cells.net, cells.tax, cells.gross]) if (cell) money.push(cell.cell);
+    const layouts = await layoutsFromXlsx(xlsx, template.fileName, {
+      money,
+      date: cells.issueDate ? { cell: cells.issueDate.cell, iso: draft.issueDate } : undefined,
     });
+    return Response.json(
+      { layouts, staff: draft.staffName, email: draft.staffEmail },
+      { headers: { 'Cache-Control': 'no-store' } }
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : '請求書を作れませんでした';
     const status = error instanceof InvoiceFitError ? 400 : 500;

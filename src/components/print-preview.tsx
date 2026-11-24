@@ -312,6 +312,7 @@ function FormPage({
       const imageIndexes = (layout.drawings || []).flatMap((item, index) => (item.kind === 'image' ? [index] : []));
       const nudged: Record<number, number> = {};
       imgs.forEach((img, ordinal) => {
+        if (layout.fixedImages) return;
         const drawingIndex = imageIndexes[ordinal];
         if (drawingIndex == null) return;
         const ir = img.getBoundingClientRect();

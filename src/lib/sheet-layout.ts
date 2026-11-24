@@ -49,6 +49,8 @@ export type SheetLayout = {
   defaultRowHeight: number;
   margin: { top: number; right: number; bottom: number; left: number };
   center?: boolean;
+  /** 印鑑などの画像を、Excelで置かれた位置のまま動かさない */
+  fixedImages?: boolean;
   cols: number[];
   rows: { n: number; height: number; cells: SheetCell[] }[];
   merges: { r: number; c: number; rows: number; cols: number }[];
@@ -488,4 +490,56 @@ export async function readPrintLayout(fileName: string): Promise<SheetLayout> {
     layout.drawings = [];
   }
   return layout;
+}
+
+/** 記入済みのExcelを、画面表示・PDF化できる版面にする。シートごとに1枚。 */
+export async function layoutsFromXlsx(
+  xlsx: Buffer,
+  templateFile: string,
+  format: {
+    money: string[];
+    date?: { cell: string; iso: string };
+  }
+): Promise<SheetLayout[]> {
+  const zip = await JSZip.loadAsync(xlsx);
+  const styles = await zipText(zip, /styles\.xml$/i);
+  const strings = await zipText(zip, /sharedStrings\.xml$/i);
+  if (!styles) throw new Error('請求書のシートが見つかりません');
+  const names = Object.keys(zip.files)
+    .map((name) => ({ name, match: name.match(/^xl\/worksheets\/sheet(\d+)\.xml$/) }))
+    .filter((item): item is { name: string; match: RegExpMatchArray } => Boolean(item.match))
+    .sort((a, b) => Number(a.match[1]) - Number(b.match[1]));
+  let drawings: SheetDrawing[] = [];
+  try {
+    const template = await JSZip.loadAsync(await readFile(path.join(process.cwd(), 'templates', templateFile)));
+    const probe = layoutOf(await zipText(template, /sheet1\.xml$/i), await zipText(template, /styles\.xml$/i), await zipText(template, /sharedStrings\.xml$/i));
+    drawings = await drawingsOf(template, probe, templateFile);
+  } catch {
+    drawings = [];
+  }
+  const place = (address: string) => ({ col: colIndex(address), row: Number(address.replace(/[A-Z]/g, '')) - 1 });
+  const layouts: SheetLayout[] = [];
+  for (const item of names) {
+    const sheet = await zip.file(item.name)!.async('string');
+    const layout = layoutOf(sheet, styles, strings);
+    layout.drawings = drawings.map((drawing) => ({ ...drawing }));
+    for (const address of format.money) {
+      const { col, row } = place(address);
+      const cell = layout.rows[row]?.cells[col];
+      if (cell && /^-?\d+(\.\d+)?$/.test(cell.text)) {
+        cell.text = Number(cell.text).toLocaleString('ja-JP');
+        cell.align = 'right';
+      }
+    }
+    if (format.date) {
+      const { col, row } = place(format.date.cell);
+      const cell = layout.rows[row]?.cells[col];
+      const m = format.date.iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (cell && m) cell.text = `${m[1]}年${Number(m[2])}月${Number(m[3])}日`;
+    }
+    layout.center = true;
+    layout.fixedImages = true;
+    layouts.push(layout);
+  }
+  return layouts;
 }
