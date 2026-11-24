@@ -98,11 +98,11 @@ async function fillPage(template: InvoiceTemplate, draft: InvoiceDraft, lines: I
   if (cells.gross) writeMoney(sheet, cells.gross.cell, gross, cells.gross.maxDigits, '税込合計');
 
   const buffer = await workbook.xlsx.writeBuffer();
-  return centerInvoicePage(Buffer.from(buffer));
+  return centerInvoicePage(Buffer.from(buffer), template.fileName);
 }
 
 /** 84%縮小だと右だけ余る。用紙の左右中央に置く */
-async function centerInvoicePage(buffer: Buffer) {
+async function centerInvoicePage(buffer: Buffer, templateFile: string) {
   const zip = await JSZip.loadAsync(buffer);
   const sheetPath = 'xl/worksheets/sheet1.xml';
   let xml = await zip.file(sheetPath)!.async('string');
@@ -113,6 +113,21 @@ async function centerInvoicePage(buffer: Buffer) {
     '<pageSetup paperSize="9" scale="84" orientation="portrait"/>'
   );
   zip.file(sheetPath, xml);
+  // exceljsは「注文書なし」などの図形を落とすので、ひな形の図の部品をそのまま戻す
+  const original = await JSZip.loadAsync(await readFile(templatePath(templateFile)));
+  for (const name of Object.keys(original.files)) {
+    if (/^xl\/(drawings\/drawing1\.xml|drawings\/_rels\/drawing1\.xml\.rels|media\/[^/]+)$/.test(name)) {
+      zip.file(name, await original.file(name)!.async('nodebuffer'));
+    }
+  }
+  const types = zip.file('[Content_Types].xml');
+  if (types) {
+    let typesXml = await types.async('string');
+    if (!/Extension="emf"/i.test(typesXml)) {
+      typesXml = typesXml.replace('<Default ', '<Default Extension="emf" ContentType="image/x-emf"/><Default ');
+      zip.file('[Content_Types].xml', typesXml);
+    }
+  }
   return Buffer.from(await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
 }
 
