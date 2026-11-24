@@ -59,18 +59,14 @@ function money(value: number): string {
 
 const MAIL_RULE = '▲'.repeat(23);
 
-function bytesToBase64(bytes: Uint8Array) {
-  let text = '';
-  const size = 0x8000;
-  for (let index = 0; index < bytes.length; index += size) {
-    text += String.fromCharCode(...bytes.subarray(index, index + size));
-  }
-  return btoa(text);
-}
-
 function siteLabelOf(group: Group) {
   const names = [...new Set(group.sites.map((site) => site.name.trim()).filter((name) => name && name !== '現場未入力'))];
   return names.length ? names.join('、') : '現場';
+}
+
+function invoicePdfName(site: string, month: number) {
+  const safe = site.replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim() || '現場';
+  return `【${safe}】 ${month}月分請求書.pdf`;
 }
 
 function satsumaMail(person: string, site: string, month: number) {
@@ -92,7 +88,7 @@ function satsumaMail(person: string, site: string, month: number) {
       'TEL 047-446-6549   FAX 047-498-9461',
       MAIL_RULE,
     ].join('\r\n'),
-    fileName: `${month}月分請求書.pdf`,
+    fileName: invoicePdfName(site, month),
   };
 }
 
@@ -164,7 +160,9 @@ export default function BillingClient() {
   const [pdfMode, setPdfMode] = useState<'print' | 'mail' | null>(null);
   const [printUrl, setPrintUrl] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
+  const [gmailHref, setGmailHref] = useState('');
   const [error, setError] = useState('');
+  const [helperMissing, setHelperMissing] = useState(false);
   const pdfLock = useRef(false);
 
   // 訂正処理から戻ってきた時は、同じ基準日・締め・得意先ページを開く
@@ -420,7 +418,11 @@ export default function BillingClient() {
     return line.unit || extraUnits[line.name] || '';
   }
 
-  const helperDown = 'このパソコンで請求PDFが起動していません。Excelの入った会社のパソコンで scripts\\start-invoice-pdf.cmd を開いてから、もう一度押してください。';
+  function helperMissingError() {
+    const error = new Error('このパソコンで請求PDFの受付が動いていません。下のプログラムを保存して解凍し、start-invoice-pdf.cmd を開いたまま、もう一度押してください。Excelが必要です。');
+    error.name = 'HelperMissingError';
+    return error;
+  }
 
   async function loadTemplateWorkbook(group: Group) {
     if (!period) throw new Error('対象期間がありません');
@@ -444,9 +446,14 @@ export default function BillingClient() {
         method: 'POST',
         headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
         body: workbook,
+        signal: AbortSignal.timeout(60000),
       });
-    } catch {
-      throw new Error(helperDown);
+    } catch (err) {
+      const name = err instanceof DOMException ? err.name : '';
+      if (name === 'TimeoutError' || name === 'AbortError') {
+        throw new Error('Excelが応答しませんでした。受付の窓を一度閉じて start-invoice-pdf.cmd を開き直してから、もう一度押してください。');
+      }
+      throw helperMissingError();
     }
     if (!pdfResponse.ok) throw new Error((await pdfResponse.text()) || 'PDFを作れませんでした');
     return pdfResponse.blob();
@@ -478,15 +485,20 @@ export default function BillingClient() {
     setPdfMode('print');
     setError('');
     setNotice('');
+    setHelperMissing(false);
+    setGmailHref('');
     try {
       const { workbook } = await loadTemplateWorkbook(group);
       const pdf = await convertWorkbook(workbook);
-      const url = URL.createObjectURL(pdf);
+      const month = Number(period.end.slice(5, 7));
+      const file = new File([pdf], invoicePdfName(siteLabelOf(group), month), { type: 'application/pdf' });
+      const url = URL.createObjectURL(file);
       setPrintUrl((current) => {
         if (current) URL.revokeObjectURL(current);
         return url;
       });
     } catch (err) {
+      if (err instanceof Error && err.name === 'HelperMissingError') setHelperMissing(true);
       setError(err instanceof Error ? err.message : 'PDFを作れませんでした');
     } finally {
       pdfLock.current = false;
@@ -496,33 +508,45 @@ export default function BillingClient() {
 
   async function mailTemplate(group: Group) {
     if (!period || pdfLock.current) return;
+    const popup = window.open('about:blank', '_blank');
     pdfLock.current = true;
     setPdfMode('mail');
     setError('');
     setNotice('');
+    setHelperMissing(false);
+    setGmailHref('');
     try {
       const { workbook, staff, email } = await loadTemplateWorkbook(group);
+      const pdf = await convertWorkbook(workbook);
       const month = Number(period.end.slice(5, 7));
       const mail = satsumaMail(staff, siteLabelOf(group), month);
-      const xlsx = bytesToBase64(new Uint8Array(await workbook.arrayBuffer()));
-      let response: Response;
-      try {
-        response = await fetch('http://127.0.0.1:3100/mail', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ xlsx, subject: mail.subject, body: mail.body, fileName: mail.fileName, to: email }),
-          signal: AbortSignal.timeout(120000),
-        });
-      } catch (err) {
-        const name = err instanceof DOMException ? err.name : '';
-        if (name === 'TimeoutError' || name === 'AbortError') {
-          throw new Error('メールの作成に時間がかかりすぎました。もう一度押してください。');
-        }
-        throw new Error(helperDown);
-      }
-      if (!response.ok) throw new Error((await response.text()) || 'メールを開けませんでした');
-      setNotice('Outlookに下書きを開きました。宛先・本文・添付を確認してから送信してください。送信はまだされていません。');
+      const gmail = new URL('https://mail.google.com/mail/');
+      gmail.searchParams.set('view', 'cm');
+      gmail.searchParams.set('fs', '1');
+      gmail.searchParams.set('tf', '1');
+      if (email) gmail.searchParams.set('to', email);
+      gmail.searchParams.set('su', mail.subject);
+      gmail.searchParams.set('body', mail.body);
+      const href = gmail.toString();
+      const opened = Boolean(popup && !popup.closed);
+      if (opened && popup) popup.location.href = href;
+      setGmailHref(href);
+      const url = URL.createObjectURL(pdf);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = mail.fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+      setNotice(
+        opened
+          ? 'Gmailを開きました。保存されたPDFを、そのメールに添付してから送信してください。'
+          : 'PDFを保存しました。下のリンクからGmailを開き、そのPDFを添付してから送信してください。'
+      );
     } catch (err) {
+      popup?.close();
+      if (err instanceof Error && err.name === 'HelperMissingError') setHelperMissing(true);
       setError(err instanceof Error ? err.message : 'メールを開けませんでした');
     } finally {
       pdfLock.current = false;
@@ -735,8 +759,29 @@ export default function BillingClient() {
             {groups.length}社　合計 {money(total)}
           </p>
         )}
-        {error && <p className="mb-4 text-sm font-bold text-rose-700">{error}</p>}
-        {notice && <p className="mb-4 text-sm font-bold text-teal-800">{notice}</p>}
+        {error && (
+          <div className="mb-4 text-sm font-bold text-rose-700">
+            <p>{error}</p>
+            {helperMissing && (
+              <a href="/api/invoices/helper" className="mt-2 inline-flex h-10 items-center rounded-lg bg-slate-900 px-3 text-white">
+                受付プログラムをダウンロード
+              </a>
+            )}
+          </div>
+        )}
+        {notice && (
+          <p className="mb-4 text-sm font-bold text-teal-800">
+            {notice}
+            {gmailHref && (
+              <>
+                {' '}
+                <a href={gmailHref} target="_blank" rel="noopener noreferrer" className="underline">
+                  Gmailを開く
+                </a>
+              </>
+            )}
+          </p>
+        )}
         {loading && <p className="text-sm font-bold text-slate-500">集計しています...</p>}
 
         {!loading && groups.length === 0 && (
@@ -766,7 +811,7 @@ export default function BillingClient() {
                     onClick={() => mailTemplate(selected)}
                     className="h-9 px-3 rounded-lg bg-teal-700 text-white text-sm font-extrabold disabled:opacity-60"
                   >
-                    {pdfMode === 'mail' ? 'メールを作成中' : '請求書をメールで送信'}
+                    {pdfMode === 'mail' ? '請求書を作成しています' : '請求書をGmailで開く'}
                   </button>
                 </>
               ) : (

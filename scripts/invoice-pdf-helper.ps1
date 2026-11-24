@@ -1,6 +1,6 @@
 ﻿# ボタンを押したパソコンの中だけで動く。127.0.0.1 以外からは接続できない。
 # Excel の「PDFで保存」で、記入済みの請求書を PDF にする。
-param([switch]$MailMode)
+param([switch]$MailMode, [switch]$ExcelMode)
 
 $ErrorActionPreference = 'Stop'
 
@@ -18,30 +18,101 @@ if ($MailMode) {
   exit 0
 }
 
-$listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, 3100)
-$listener.Start()
-Write-Host '請求PDFの受付を開始しました。この窓は閉じないでください。'
-Write-Host '待受: http://127.0.0.1:3100/'
+if (-not ('Win32ExcelPid' -as [type])) {
+  Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class Win32ExcelPid {
+  [DllImport("user32.dll")]
+  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+'@
+}
+
+function Stop-EmbeddingExcel() {
+  Get-CimInstance Win32_Process -Filter "Name = 'EXCEL.EXE'" | Where-Object {
+    $_.CommandLine -like '*-Embedding*'
+  } | ForEach-Object {
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+  }
+}
 
 function Convert-WithExcel([string]$xlsxPath, [string]$pdfPath) {
+  Stop-EmbeddingExcel
+  Start-Sleep -Milliseconds 400
   $excel = $null
   $book = $null
+  $excelPid = 0
   try {
     $excel = New-Object -ComObject Excel.Application
     $excel.Visible = $false
     $excel.DisplayAlerts = $false
+    $excel.AskToUpdateLinks = $false
     $excel.ScreenUpdating = $false
+    try {
+      $procId = [uint32]0
+      [void][Win32ExcelPid]::GetWindowThreadProcessId([IntPtr]$excel.Hwnd, [ref]$procId)
+      $excelPid = [int]$procId
+    } catch {}
     $book = $excel.Workbooks.Open($xlsxPath, 0, $true)
     # OpenAfterPublish は false。保存ダイアログや2つ目のPDFを出さない。
     $book.ExportAsFixedFormat(0, $pdfPath, 0, $false, $false, [Type]::Missing, [Type]::Missing, $false)
   } finally {
-    if ($book) { $book.Close($false) | Out-Null }
-    if ($excel) { $excel.Quit() | Out-Null }
-    if ($book) { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($book) }
-    if ($excel) { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) }
+    if ($book) {
+      try { $book.Close($false) | Out-Null } catch {}
+      try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($book) } catch {}
+    }
+    if ($excel) {
+      try { $excel.Quit() | Out-Null } catch {}
+      try { [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($excel) } catch {}
+    }
     [GC]::Collect()
+    [GC]::WaitForPendingFinalizers()
+    if ($excelPid -gt 0) {
+      Stop-Process -Id $excelPid -Force -ErrorAction SilentlyContinue
+    }
   }
 }
+
+function Invoke-ExcelConvert([string]$xlsxPath, [string]$pdfPath) {
+  $started = Get-Date
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = (Get-Process -Id $PID).Path
+  $psi.Arguments = "-NoProfile -Sta -ExecutionPolicy Bypass -File `"$PSCommandPath`" -ExcelMode"
+  $psi.UseShellExecute = $false
+  $psi.CreateNoWindow = $true
+  $psi.EnvironmentVariables['CRANE_XLSX'] = $xlsxPath
+  $psi.EnvironmentVariables['CRANE_PDF'] = $pdfPath
+  $child = [System.Diagnostics.Process]::Start($psi)
+  if (-not $child.WaitForExit(45000)) {
+    Get-CimInstance Win32_Process -Filter "Name = 'EXCEL.EXE'" | Where-Object {
+      $_.CommandLine -like '*-Embedding*' -and $_.CreationDate -ge $started.AddSeconds(-5)
+    } | ForEach-Object {
+      Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    try { $child.Kill() } catch {}
+    throw 'Excelが応答しないため中断しました。もう一度押してください。'
+  }
+  if ($child.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $pdfPath)) {
+    throw 'このパソコンの Excel でPDFにできませんでした。'
+  }
+}
+
+if ($ExcelMode) {
+  try {
+    Convert-WithExcel $env:CRANE_XLSX $env:CRANE_PDF
+    if (-not (Test-Path -LiteralPath $env:CRANE_PDF)) { exit 1 }
+    exit 0
+  } catch {
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+  }
+}
+
+$listener = New-Object System.Net.Sockets.TcpListener([System.Net.IPAddress]::Loopback, 3100)
+$listener.Start()
+Write-Host '請求PDFの受付を開始しました。この窓は閉じないでください。'
+Write-Host '待受: http://127.0.0.1:3100/'
 
 function Read-HttpRequest($stream) {
   $data = New-Object System.Collections.Generic.List[byte]
@@ -281,7 +352,7 @@ while ($true) {
         Write-Http $stream 400 'Bad Request' $msg 'text/plain; charset=utf-8'
         continue
       }
-      Convert-WithExcel $xlsxPath $pdfPath
+      Invoke-ExcelConvert $xlsxPath $pdfPath
       if (-not (Test-Path -LiteralPath $pdfPath)) {
         $msg = [System.Text.Encoding]::UTF8.GetBytes('Excelは起動しましたが、PDFができませんでした')
         Write-Http $stream 500 'Error' $msg 'text/plain; charset=utf-8'

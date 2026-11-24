@@ -71,14 +71,12 @@ function fillLines(sheet: ExcelJS.Worksheet, template: InvoiceTemplate, lines: I
   });
 }
 
-async function fillPage(template: InvoiceTemplate, draft: InvoiceDraft, lines: InvoiceLine[], page: number, pageCount: number) {
+async function fillPage(template: InvoiceTemplate, draft: InvoiceDraft, lines: InvoiceLine[]) {
   const { workbook, sheet } = await loadSheet(template);
   const cells = template.cells;
   const net = draft.lines.reduce((sum, line) => sum + line.amount, 0);
   const tax = taxOf(net);
   const gross = net + tax;
-  const pageNet = lines.reduce((sum, line) => sum + line.amount, 0);
-  const last = page === pageCount - 1;
 
   if (cells.customerName) {
     const base = draft.customerName.replace(/[　\s]*御中\s*$/, '').trim();
@@ -95,14 +93,9 @@ async function fillPage(template: InvoiceTemplate, draft: InvoiceDraft, lines: I
   }
   if (cells.headerGross) writeYen(sheet, cells.headerGross.cell, gross, cells.headerGross.maxDigits, '請求金額');
   fillLines(sheet, template, lines);
-  if (last) {
-    if (cells.net) writeMoney(sheet, cells.net.cell, net, cells.net.maxDigits, '税抜合計');
-    if (cells.tax) writeMoney(sheet, cells.tax.cell, tax, cells.tax.maxDigits, '消費税');
-    if (cells.gross) writeMoney(sheet, cells.gross.cell, gross, cells.gross.maxDigits, '税込合計');
-  } else if (cells.net) {
-    writeMoney(sheet, cells.net.cell, pageNet, cells.net.maxDigits, '税抜合計');
-    if (cells.carryNote) writeText(sheet, cells.carryNote.cell, fitText('次ページへ繰越', cells.carryNote.maxChars));
-  }
+  if (cells.net) writeMoney(sheet, cells.net.cell, net, cells.net.maxDigits, '税抜合計');
+  if (cells.tax) writeMoney(sheet, cells.tax.cell, tax, cells.tax.maxDigits, '消費税');
+  if (cells.gross) writeMoney(sheet, cells.gross.cell, gross, cells.gross.maxDigits, '税込合計');
 
   const buffer = await workbook.xlsx.writeBuffer();
   return centerInvoicePage(Buffer.from(buffer));
@@ -209,7 +202,7 @@ export async function buildInvoiceXlsx(template: InvoiceTemplate, draft: Invoice
   if (pages.length === 0) pages.push([]);
   const buffers: Buffer[] = [];
   for (let page = 0; page < pages.length; page += 1) {
-    buffers.push(await fillPage(template, draft, pages[page], page, pages.length));
+    buffers.push(await fillPage(template, draft, pages[page]));
   }
   return combinePages(buffers, '$A1:$N43');
 }
