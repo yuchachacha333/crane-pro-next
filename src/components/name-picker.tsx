@@ -111,6 +111,9 @@ export default function NamePicker({
     setSheet(false);
   }
 
+  // 選んだ内容を空に戻す（自由入力欄は文字を消せるので不要）。選択画面の中で「再選択」か「解除」を選ぶ
+  const clearable = !freeText && !disabled && Boolean(value);
+
   const browsing = showAll || (Boolean(freeText) && !filterText.trim());
   const list = browsing ? items.slice(0, 80) : found;
 
@@ -127,6 +130,7 @@ export default function NamePicker({
           onClick={() => !disabled && setSheet(true)}
           className={`${className || ''} cursor-pointer`}
         />
+
         {sheet && (
           <PickerSheet
             title={title || placeholder || '選択'}
@@ -137,6 +141,7 @@ export default function NamePicker({
             onPick={(id) => choose(nameById.get(id) || '', id)}
             onFreeText={freeText ? (text) => choose(text) : undefined}
             onCreate={onCreate ? () => { setSheet(false); onCreate(); } : undefined}
+            onClear={clearable ? () => choose('') : undefined}
             onClose={() => setSheet(false)}
           />
         )}
@@ -208,6 +213,18 @@ export default function NamePicker({
                 {item.searchWord ? <span className="block text-[11px] font-medium text-slate-500">{item.searchWord}</span> : null}
               </button>
             ))}
+            {clearable && (
+              <button
+                type="button"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  choose('');
+                }}
+                className="sticky bottom-0 block w-full border-t border-slate-200 bg-red-50 px-3 py-2 text-left text-sm font-extrabold text-red-700 hover:bg-red-100"
+              >
+                選択を解除（空にする）
+              </button>
+            )}
             {onCreate && (
               <button
                 type="button"

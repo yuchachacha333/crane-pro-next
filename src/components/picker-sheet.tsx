@@ -138,6 +138,7 @@ export default function PickerSheet({
   onClose,
   onFreeText,
   onCreate,
+  onClear,
 }: {
   title: string;
   items: SheetItem[];
@@ -149,6 +150,7 @@ export default function PickerSheet({
   onClose: () => void;
   onFreeText?: (text: string) => void;
   onCreate?: () => void;
+  onClear?: () => void;
 }) {
   const [query, setQuery] = useState('');
   const [row, setRow] = useState('');
@@ -302,6 +304,15 @@ export default function PickerSheet({
       </div>
 
       <div className="flex shrink-0 gap-2 border-t-2 border-slate-300 bg-white p-3">
+        {onClear && (
+          <button
+            type="button"
+            onClick={onClear}
+            className="h-14 flex-1 rounded-xl border-2 border-red-600 bg-red-50 px-3 text-lg font-black text-red-700"
+          >
+            選択を解除
+          </button>
+        )}
         {onCreate && (
           <button
             type="button"
