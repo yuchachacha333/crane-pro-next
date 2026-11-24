@@ -1148,10 +1148,10 @@ export default function CraneProApp() {
               担当者マスタをまだ読めません。Supabase の SQL エディタで supabase/enable_master_access.sql を実行すると、得意先の担当者と携帯番号が出ます。
             </p>
           )}
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-2 xl:flex-nowrap xl:gap-4">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-2 2xl:flex-nowrap 2xl:gap-4">
             <h1 className="order-1 shrink-0 text-xl md:text-3xl font-extrabold text-slate-900 tracking-tight">配車管理</h1>
 
-            <div className="order-2 ml-auto flex shrink-0 items-center gap-1.5 xl:order-3 xl:gap-2">
+            <div className="order-2 ml-auto flex shrink-0 items-center gap-1.5 2xl:order-3 2xl:gap-2">
               {copiedRow && (
                 <button
                   onClick={handlePasteRow}
@@ -1159,7 +1159,7 @@ export default function CraneProApp() {
                   className="inline-flex h-9 items-center gap-1.5 px-2.5 md:h-11 md:px-3.5 rounded-xl bg-amber-100 text-amber-900 border border-amber-300 font-bold text-sm hover:bg-amber-200 transition"
                 >
                   <ClipboardPaste className="w-4 h-4" />
-                  <span className="hidden xl:inline">コピー行を貼り付け</span>
+                  <span className="hidden 2xl:inline">コピー行を貼り付け</span>
                 </button>
               )}
               <button
@@ -1168,7 +1168,7 @@ export default function CraneProApp() {
                 className="inline-flex h-9 items-center gap-1.5 px-3 md:h-11 md:px-4 rounded-xl bg-[#121826] text-white font-bold text-sm shadow-sm hover:bg-slate-800 transition"
               >
                 <Plus className="w-4 h-4" />
-                <span className="hidden xl:inline">新規配車行追加</span>
+                <span className="hidden 2xl:inline">新規配車行追加</span>
               </button>
               <button
                 onClick={() => openPrint('board')}
@@ -1176,25 +1176,25 @@ export default function CraneProApp() {
                 className="inline-flex h-9 items-center gap-1.5 px-2.5 md:h-11 md:px-3.5 rounded-xl bg-white text-slate-700 border border-slate-300 font-bold text-sm hover:bg-slate-50 transition"
               >
                 <Printer className="w-4 h-4" />
-                <span className="hidden xl:inline">配車表</span>
+                <span className="hidden 2xl:inline">配車表</span>
               </button>
             </div>
 
             {/* 日付・曜日・六曜（タップでカレンダー） */}
-            <div className="order-3 flex w-full items-center justify-center gap-1.5 xl:order-2 xl:w-auto xl:flex-1 xl:gap-2">
+            <div className="order-3 flex w-full items-center justify-center gap-2 2xl:order-2 2xl:w-auto 2xl:flex-1 2xl:gap-2">
               <button
                 onClick={() => setBoardDate(shiftIsoDate(boardDate, -1))}
-                className="w-9 h-9 md:w-11 md:h-11 rounded-lg md:rounded-xl border border-slate-300 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-700"
+                className="w-11 h-11 md:w-14 md:h-14 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-700"
                 aria-label="前日"
               >
-                <ChevronLeft className="w-4 h-4 md:w-6 md:h-6" />
+                <ChevronLeft className="w-6 h-6 md:w-8 md:h-8" />
               </button>
 
-              <label className="relative flex h-9 md:h-11 min-w-0 flex-1 md:flex-none cursor-pointer items-center justify-center gap-1.5 md:gap-3 px-3 md:px-5 rounded-lg md:rounded-xl bg-sky-50 border border-sky-200">
-                <span className="text-sm md:text-2xl font-black text-slate-900 leading-none whitespace-nowrap">
+              <label className="relative flex h-11 md:h-14 min-w-0 flex-1 md:flex-none cursor-pointer items-center justify-center gap-2 md:gap-3 px-4 md:px-6 rounded-xl bg-sky-50 border border-sky-200">
+                <span className="text-lg md:text-3xl font-black text-slate-900 leading-none whitespace-nowrap">
                   {boardDate ? formatJapaneseMonthDay(boardDate) : '…'}
                 </span>
-                <span className="text-xs md:text-base font-bold text-sky-900 leading-none whitespace-nowrap">（{weekdayLabel}）</span>
+                <span className="text-sm md:text-lg font-bold text-sky-900 leading-none whitespace-nowrap">（{weekdayLabel}）</span>
                 {rokuyoLabel && (
                   <span
                     className={`px-1.5 md:px-2.5 py-0.5 rounded-full text-[10px] md:text-sm font-extrabold leading-none ${
@@ -1220,15 +1220,15 @@ export default function CraneProApp() {
 
               <button
                 onClick={() => setBoardDate(shiftIsoDate(boardDate, 1))}
-                className="w-9 h-9 md:w-11 md:h-11 rounded-lg md:rounded-xl border border-slate-300 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-700"
+                className="w-11 h-11 md:w-14 md:h-14 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-700"
                 aria-label="翌日"
               >
-                <ChevronRight className="w-4 h-4 md:w-6 md:h-6" />
+                <ChevronRight className="w-6 h-6 md:w-8 md:h-8" />
               </button>
 
               <button
                 onClick={() => setBoardDate(getTodayIso())}
-                className="px-3 h-9 md:h-11 rounded-lg md:rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-xs md:text-sm font-bold text-slate-700"
+                className="px-4 h-11 md:h-14 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-sm md:text-base font-bold text-slate-700"
               >
                 今日
               </button>
@@ -1247,7 +1247,7 @@ export default function CraneProApp() {
                   key={day}
                   type="button"
                   onClick={() => setBoardDate(day)}
-                  className={`h-8 min-w-8 md:h-10 md:min-w-9 shrink-0 px-1 md:px-1.5 rounded-md md:rounded-lg text-[11px] md:text-xs font-extrabold leading-none ${
+                  className={`h-10 min-w-10 md:h-12 md:min-w-11 shrink-0 px-1.5 md:px-2 rounded-lg text-sm md:text-base font-extrabold leading-none ${
                     unassigned
                       ? active
                         ? 'bg-amber-400 text-amber-950 ring-2 ring-amber-700'
