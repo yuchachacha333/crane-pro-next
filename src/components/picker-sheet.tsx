@@ -165,7 +165,7 @@ export default function PickerSheet({
     };
   }, []);
 
-  const sorted = useMemo(() => [...items].sort(compare), [items]);
+  const sorted = useMemo(() => (kana ? [...items].sort(compare) : items), [items, kana]);
 
   const shown = useMemo(() => {
     const q = toHiragana(query).toLowerCase().trim();

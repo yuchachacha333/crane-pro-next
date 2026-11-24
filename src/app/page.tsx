@@ -701,7 +701,13 @@ export default function CraneProApp() {
     if (query) {
       pool = pool.filter((site) => `${site.name || ''} ${site.address || ''}`.includes(query));
     }
-    return pool.slice(0, 40).map((site) => ({
+    const recency = (site: { created_at?: string; code?: string }) => {
+      const time = Date.parse(String(site.created_at || ''));
+      if (Number.isFinite(time)) return time;
+      const code = parseInt(String(site.code || '').replace(/[^\d]/g, ''), 10);
+      return Number.isNaN(code) ? 0 : code;
+    };
+    return [...pool].sort((a, b) => recency(b) - recency(a)).slice(0, 40).map((site) => ({
       id: site.id,
       value: site.name,
       hint: site.address || '',
@@ -1428,6 +1434,7 @@ export default function CraneProApp() {
                             currentId={row.supplier_code || ''}
                             items={supplierItems}
                             title="庸車先を選ぶ"
+                            mark="庸"
                             disabled={hasOp && !hasSup}
                             placeholder={hasOp ? '自社オペ中' : 'タップして選ぶ'}
                             onSelect={(name) => applySupplier(row, name)}
@@ -1806,6 +1813,7 @@ export default function CraneProApp() {
                           currentId={row.supplier_code || ''}
                           items={supplierItems}
                           title="庸車先を選ぶ"
+                          mark="庸"
                           disabled={hasOp && !hasSup}
                           placeholder={hasOp ? '自社オペ中' : 'タップして選ぶ'}
                           onSelect={(name) => applySupplier(row, name)}
@@ -1928,10 +1936,15 @@ export default function CraneProApp() {
           draft={siteDraft}
           onClose={() => setSiteDraft(null)}
           onCreated={(site) => {
-            setSites((current) =>
-              [...current.filter((item) => item.id !== site.id), { ...(current.find((item) => item.id === site.id) || {}), ...site }]
-                .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ja'))
-            );
+            setSites((current) => {
+              const prev = current.find((item) => item.id === site.id);
+              const next = {
+                ...(prev || {}),
+                ...site,
+                created_at: prev?.created_at || new Date().toISOString(),
+              };
+              return [...current.filter((item) => item.id !== site.id), next];
+            });
             handleUpdateField(siteDraft.rowId, {
               site_code: site.code,
               site_name: site.name,
@@ -2380,6 +2393,7 @@ export default function CraneProApp() {
                         currentId={selectedJob.supplier_code || ''}
                         items={supplierItems}
                         title="庸車先を選ぶ"
+                        mark="庸"
                         placeholder="タップして選ぶ"
                         onSelect={(name) => {
                           const hit = customers.find(

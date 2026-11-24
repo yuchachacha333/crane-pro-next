@@ -41,6 +41,7 @@ export default function NamePicker({
   title,
   panel,
   currentId,
+  mark,
   onSelect,
   onCreate,
 }: {
@@ -53,6 +54,8 @@ export default function NamePicker({
   title?: string;
   panel?: boolean;
   currentId?: string;
+  /** 未選択のときはこの文字のボタンだけ出し、選んだあと会社名を出す（例: 庸） */
+  mark?: string;
   onSelect: (name: string, id?: string) => void;
   onCreate?: () => void;
 }) {
@@ -119,17 +122,47 @@ export default function NamePicker({
 
   // スマホ・iPad、または指定した項目は頭文字で絞る選択画面
   if (touch || panel) {
+    const openSheet = () => {
+      if (!disabled) setSheet(true);
+    };
     return (
       <div ref={box} className="relative min-w-0 w-full">
-        <input
-          type="text"
-          readOnly
-          value={value}
-          placeholder={placeholder || 'タップして選ぶ'}
-          disabled={disabled}
-          onClick={() => !disabled && setSheet(true)}
-          className={`${className || ''} cursor-pointer`}
-        />
+        {mark && !value ? (
+          <button
+            type="button"
+            disabled={disabled}
+            title={disabled ? placeholder || title : title || '庸車を選ぶ'}
+            aria-label={title || '庸車を選ぶ'}
+            onClick={openSheet}
+            className="m-1 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-400 bg-white text-sm font-black text-slate-900 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-300"
+          >
+            {mark}
+          </button>
+        ) : (
+          <div className="flex min-w-0 items-center">
+            {mark ? (
+              <button
+                type="button"
+                disabled={disabled}
+                title={title || '庸車'}
+                aria-label={title || '庸車'}
+                onClick={openSheet}
+                className="ml-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-900 text-xs font-black text-white disabled:bg-slate-300"
+              >
+                {mark}
+              </button>
+            ) : null}
+            <input
+              type="text"
+              readOnly
+              value={value}
+              placeholder={placeholder || 'タップして選ぶ'}
+              disabled={disabled}
+              onClick={openSheet}
+              className={`${className || ''} cursor-pointer`}
+            />
+          </div>
+        )}
 
         {sheet && (
           <PickerSheet
