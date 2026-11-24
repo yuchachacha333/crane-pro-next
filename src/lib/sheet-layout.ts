@@ -537,7 +537,15 @@ export async function layoutsFromXlsx(
       const m = format.date.iso.match(/^(\d{4})-(\d{2})-(\d{2})/);
       if (cell && m) cell.text = `${m[1]}年${Number(m[2])}月${Number(m[3])}日`;
     }
-    layout.center = true;
+    // Excelの印刷と同じ大きさ・位置にする。表は縮尺どおりの幅で、用紙の左右中央、上は上余白から始める
+    const naturalPx = layout.cols.reduce(
+      (sum, width) => sum + Math.trunc(((256 * width + Math.trunc(128 / 7)) / 256) * 7),
+      0
+    );
+    const pageMm = layout.orientation === 'landscape' ? 297 : 210;
+    const contentMm = (naturalPx * layout.scale) / 100 * (25.4 / 96);
+    const side = Math.max(0, Math.round(((pageMm - contentMm) / 2) * 10) / 10);
+    layout.margin = { ...layout.margin, left: side, right: side };
     layout.fixedImages = true;
     layouts.push(layout);
   }

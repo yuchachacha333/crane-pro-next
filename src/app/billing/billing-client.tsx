@@ -67,7 +67,7 @@ function siteLabelOf(group: Group) {
 
 function invoicePdfName(site: string, month: number) {
   const safe = site.replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim() || '現場';
-  return `【${safe}】 ${month}月分請求書.pdf`;
+  return `${safe} ${month}月分請求書.pdf`;
 }
 
 function satsumaMail(person: string, site: string, month: number) {

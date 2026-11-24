@@ -107,7 +107,7 @@ export default function TemplateInvoice({
         {error && <p className="mb-3 text-center text-sm font-bold text-rose-700">{error}</p>}
         {layouts.map((layout, index) => (
           <FitPages key={index}>
-            <LayoutSheet layout={layout} clip />
+            <LayoutSheet layout={layout} />
           </FitPages>
         ))}
       </div>

@@ -359,6 +359,7 @@ function FormPage({
     <article
       className="dispatch-page"
       data-orient={layout.orientation === 'landscape' ? 'landscape' : 'portrait'}
+      data-exact={layout.fixedImages ? '1' : undefined}
       style={{
         ...pageFrame(layout),
       }}
@@ -664,7 +665,7 @@ async function sheetsToPdf(title: string) {
       clone.style.overflow = 'hidden';
       clone.style.display = 'flex';
       clone.style.flexDirection = 'column';
-      clone.style.justifyContent = 'center';
+      clone.style.justifyContent = clone.getAttribute('data-exact') ? 'flex-start' : 'center';
       stage.innerHTML = '';
       stage.appendChild(clone);
       await new Promise((resolve) => window.setTimeout(resolve, 60));
@@ -852,6 +853,7 @@ function pageFrame(layout: SheetLayout): CSSProperties {
       overflow: 'hidden',
     };
   }
+  const exact = Boolean(layout.fixedImages);
   const padY = (Number(margin.top) + Number(margin.bottom)) / 2;
   const padX = (Number(margin.left) + Number(margin.right)) / 2;
   return {
@@ -860,13 +862,13 @@ function pageFrame(layout: SheetLayout): CSSProperties {
     margin: '0 auto 16px',
     background: '#fff',
     color: '#000',
-    padding: `${padY}mm ${padX}mm`,
+    padding: exact ? `${Number(margin.top)}mm ${padX}mm 0` : `${padY}mm ${padX}mm`,
     boxSizing: 'border-box',
     boxShadow: '0 8px 28px rgba(0,0,0,.18)',
     fontFamily: '"Yu Gothic","Yu Gothic UI","Hiragino Sans",Meiryo,sans-serif',
     display: 'flex',
     flexDirection: 'column',
-    justifyContent: 'center',
+    justifyContent: exact ? 'flex-start' : 'center',
   };
 }
 
