@@ -159,7 +159,7 @@ export default function BillingClient() {
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [pdfMode, setPdfMode] = useState<'print' | 'mail' | null>(null);
-  const [sheet, setSheet] = useState<{ layouts: SheetLayout[]; title: string; gmail?: { href: string; popup: Window | null } } | null>(null);
+  const [sheet, setSheet] = useState<{ layouts: SheetLayout[]; title: string; excelPdf?: File | null; gmail?: { href: string; popup: Window | null } } | null>(null);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const pdfLock = useRef(false);
@@ -425,7 +425,24 @@ export default function BillingClient() {
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       throw new Error(body?.error || '請求書を作れませんでした');
     }
-    return (await response.json()) as { layouts: SheetLayout[]; staff: string; email: string };
+    return (await response.json()) as { layouts: SheetLayout[]; staff: string; email: string; xlsx: string };
+  }
+
+  /** この端末にExcel受付があれば、Excelで作ったPDFを返す。無ければ null */
+  async function excelPdfOf(xlsxBase64: string, name: string) {
+    try {
+      const bytes = Uint8Array.from(atob(xlsxBase64), (ch) => ch.charCodeAt(0));
+      const response = await fetch('http://127.0.0.1:3100/convert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+        body: new Blob([bytes]),
+        signal: AbortSignal.timeout(60000),
+      });
+      if (!response.ok) return null;
+      return new File([await response.blob()], name, { type: 'application/pdf' });
+    } catch {
+      return null;
+    }
   }
 
   async function printTemplate(group: Group) {
@@ -435,9 +452,11 @@ export default function BillingClient() {
     setError('');
     setNotice('');
     try {
-      const { layouts } = await loadTemplateLayouts(group);
+      const { layouts, xlsx } = await loadTemplateLayouts(group);
       const month = Number(period.end.slice(5, 7));
-      setSheet({ layouts, title: invoicePdfName(siteLabelOf(group), month).replace(/\.pdf$/, '') });
+      const name = invoicePdfName(siteLabelOf(group), month);
+      const excelPdf = await excelPdfOf(xlsx, name);
+      setSheet({ layouts, excelPdf, title: name.replace(/\.pdf$/, '') });
     } catch (err) {
       setError(err instanceof Error ? err.message : '請求書を作れませんでした');
     } finally {
@@ -454,7 +473,7 @@ export default function BillingClient() {
     setError('');
     setNotice('');
     try {
-      const { layouts, staff, email } = await loadTemplateLayouts(group);
+      const { layouts, staff, email, xlsx } = await loadTemplateLayouts(group);
       const month = Number(period.end.slice(5, 7));
       const mail = satsumaMail(staff, siteLabelOf(group), month);
       const gmail = new URL('https://mail.google.com/mail/');
@@ -464,8 +483,10 @@ export default function BillingClient() {
       if (email) gmail.searchParams.set('to', email);
       gmail.searchParams.set('su', mail.subject);
       gmail.searchParams.set('body', mail.body);
+      const excelPdf = await excelPdfOf(xlsx, mail.fileName);
       setSheet({
         layouts,
+        excelPdf,
         title: mail.fileName.replace(/\.pdf$/, ''),
         gmail: { href: gmail.toString(), popup },
       });
@@ -716,6 +737,9 @@ export default function BillingClient() {
                   >
                     {pdfMode === 'mail' ? '請求書を作成しています' : '請求書をGmailで開く'}
                   </button>
+                  <a href="/api/invoices/helper" className="text-xs font-bold text-slate-600 underline">
+                    Excel受付を入れる（このパソコンで一度だけ）
+                  </a>
                 </>
               ) : (
                 <button
@@ -831,6 +855,7 @@ export default function BillingClient() {
       {sheet && (
         <TemplateInvoice
           layouts={sheet.layouts}
+          excelPdf={sheet.excelPdf}
           title={sheet.title}
           gmail={sheet.gmail}
           onClose={() => setSheet(null)}

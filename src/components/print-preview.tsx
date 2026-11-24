@@ -506,6 +506,15 @@ function FormPage({
               padding: '2pt 7pt',
               overflow: 'hidden',
               fontSize: `${(item.size * fontScale) / 100}pt`,
+              ...(layout.fixedImages && item.stroke
+                ? {
+                    border: `${item.strokeWidth || 1}px solid ${item.stroke}`,
+                    textAlign: 'center' as const,
+                    display: 'flex',
+                    flexDirection: 'column' as const,
+                    justifyContent: 'center',
+                  }
+                : {}),
               fontWeight: 500,
               lineHeight: 1.35,
               whiteSpace: 'pre-wrap',

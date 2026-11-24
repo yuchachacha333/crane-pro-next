@@ -452,7 +452,8 @@ function shapePaint(block: string) {
   const fill = /<a:noFill\/>/.test(body) ? '' : paintColor(fillXml);
   const line = sp.match(/<a:ln\b([^>]*)>([\s\S]*?)<\/a:ln>/);
   const lineXml = line?.[2] || '';
-  const width = line ? Number(line[1].match(/\bw="(\d+)"/)?.[1] || 0) : 0;
+  // 線の太さを書いていない図形は、Excelでは標準の細い線で描かれる
+  const width = line ? Number(line[1].match(/\bw="(\d+)"/)?.[1] || 12700) : 0;
   const stroke = line && !/<a:noFill\/>/.test(lineXml) && width > 0 ? paintColor(lineXml) || '#000000' : '';
   const adj = Number(sp.match(/name="adj" fmla="val (\d+)"/)?.[1] || 0);
   return {

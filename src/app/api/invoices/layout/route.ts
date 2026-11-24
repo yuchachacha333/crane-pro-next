@@ -48,7 +48,13 @@ export async function GET(request: Request) {
       date: cells.issueDate ? { cell: cells.issueDate.cell, iso: draft.issueDate } : undefined,
     });
     return Response.json(
-      { layouts, staff: draft.staffName, email: draft.staffEmail },
+      {
+        layouts,
+        staff: draft.staffName,
+        email: draft.staffEmail,
+        // Excelの入った端末では、このExcelをそのままPDFにする
+        xlsx: Buffer.from(xlsx).toString('base64'),
+      },
       { headers: { 'Cache-Control': 'no-store' } }
     );
   } catch (error) {
