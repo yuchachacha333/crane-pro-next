@@ -7,6 +7,7 @@ import InvoicePreview from '@/components/invoice-preview';
 import TemplateInvoice from '@/components/template-invoice';
 import { billingPeriod, closeKeyOf, closeLabel } from '@/lib/billing';
 import { formatJapaneseMonthDay, getTodayIso } from '@/lib/crane-utils';
+import { finitePrice, rememberedUnitPrices, resolveBasePrice, type ModelPrice } from '@/lib/sales-price';
 import { isSumitomoCustomer, type InvoiceLine, type SumitomoLine } from '@/lib/invoice-sheet';
 import { invoiceTemplateFor } from '@/lib/invoice-templates';
 import type { SheetLayout } from '@/lib/sheet-layout';
@@ -104,30 +105,8 @@ function machineUnit(
   return String(model?.unit_name || '').trim() || '式';
 }
 
-function standardPrice(
-  models: { name: string; standard_price_a: number | null; night_standard_price: number | null }[],
-  modelName: string | null | undefined,
-  shift: string | null | undefined
-) {
-  const name = String(modelName || '').trim();
-  if (!name) return null;
-  const model = models.find((item) => String(item.name || '').trim() === name);
-  if (!model) return null;
-  const night = String(shift || '').includes('夜');
-  const nightPrice = Number(model.night_standard_price);
-  const dayPrice = Number(model.standard_price_a);
-  if (night && Number.isFinite(nightPrice) && nightPrice > 0) return nightPrice;
-  if (Number.isFinite(dayPrice) && dayPrice > 0) return dayPrice;
-  return null;
-}
-
-function priced(job: Job, extra: number, standard: number | null = null) {
-  let base: number | null = null;
-  if (job.unit_price != null && Number.isFinite(Number(job.unit_price))) base = Number(job.unit_price);
-  else if (standard != null) base = standard;
-  else if (job.total_sales_amount != null && Number.isFinite(Number(job.total_sales_amount))) {
-    base = Number(job.total_sales_amount) - extra;
-  }
+function priced(job: Job, extra: number, models: ModelPrice[], remembered: Map<string, number>) {
+  const base = resolveBasePrice(job, extra, models, remembered);
   return { base, amount: (base ?? 0) + extra, missing: base == null && !extra };
 }
 
@@ -148,6 +127,7 @@ export default function BillingClient() {
   >([]);
   const [extraUnits, setExtraUnits] = useState<Record<string, string>>({});
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [autoPrices, setAutoPrices] = useState<Map<string, number>>(new Map());
   const [extras, setExtras] = useState<Record<string, ExtraRow[]>>({});
   const [detail, setDetail] = useState<{ code: string; mode: 'flat' | 'site' } | null>(null);
   const [invoice, setInvoice] = useState<{
@@ -323,7 +303,20 @@ export default function BillingClient() {
           }
         }
         if (cancelled) return;
+        const auto = await rememberedUnitPrices(
+          companyId,
+          rows
+            .filter((row) => !row.is_cancelled && finitePrice(row.unit_price) == null)
+            .map((row) => ({
+              customerCode: String(row.customer_code || ''),
+              customerName: String(row.customer_name || ''),
+              model: String(row.requested_model || ''),
+              shift: String(row.shift_type || ''),
+            }))
+        );
+        if (cancelled) return;
         setError('');
+        setAutoPrices(auto);
         setJobs(rows);
         setExtras(extraMap);
         setLoading(false);
@@ -366,7 +359,7 @@ export default function BillingClient() {
       }
       const extraLines = extras[job.id] ?? [];
       const extraTotal = extraLines.reduce((sum, line) => sum + line.amount, 0);
-      const price = priced(job, extraTotal, standardPrice(models, job.requested_model, job.shift_type));
+      const price = priced(job, extraTotal, models, autoPrices);
       const current = bucket.get(code) ?? {
         code,
         name: nameByCode.get(code) || job.customer_name || code,
@@ -403,7 +396,7 @@ export default function BillingClient() {
     });
     list.sort((a, b) => a.name.localeCompare(b.name, 'ja'));
     return { groups: list, skipped: skippedCount };
-  }, [jobs, extras, close, closeByCode, nameByCode, addressByCode, models]);
+  }, [jobs, extras, close, closeByCode, nameByCode, addressByCode, models, autoPrices]);
 
   const total = groups.reduce((sum, group) => sum + group.amount, 0);
   const selected = detail ? groups.find((group) => group.code === detail.code) : undefined;

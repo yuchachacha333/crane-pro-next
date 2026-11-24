@@ -1,5 +1,6 @@
 import { getDefaultCompanyId, supabase } from '@/lib/supabase';
 import type { InvoiceDraft, InvoiceLine, InvoiceTemplate } from '@/lib/invoice-templates';
+import { finitePrice, rememberedUnitPrices, resolveBasePrice } from '@/lib/sales-price';
 
 type JobRow = {
   id: string;
@@ -24,21 +25,6 @@ function sameCode(left: string, right: string) {
   return /^\d+$/.test(left) && /^\d+$/.test(right) && Number(left) === Number(right);
 }
 
-function standardPrice(
-  models: { name: string; standard_price_a: number | null; night_standard_price: number | null }[],
-  modelName: string,
-  shift: string
-) {
-  const model = models.find((item) => item.name.trim() === modelName.trim());
-  if (!model) return null;
-  const night = shift.includes('夜');
-  const nightPrice = Number(model.night_standard_price);
-  const dayPrice = Number(model.standard_price_a);
-  if (night && Number.isFinite(nightPrice) && nightPrice > 0) return nightPrice;
-  if (Number.isFinite(dayPrice) && dayPrice > 0) return dayPrice;
-  return null;
-}
-
 function mailAddress(value: string) {
   const text = String(value || '').replace(/[\r\n\s]/g, '');
   return /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(text) ? text : '';
@@ -56,15 +42,6 @@ function staffNameOf(jobs: JobRow[], fallback: string) {
   }
   const picked = [...counts.entries()].sort((a, b) => b[1].n - a[1].n || b[1].date.localeCompare(a[1].date))[0]?.[0];
   return picked || fallback.replace(/様$/, '').trim();
-}
-
-function baseAmount(job: JobRow, extra: number, standard: number | null) {
-  if (job.unit_price != null && Number.isFinite(Number(job.unit_price))) return Number(job.unit_price);
-  if (standard != null) return standard;
-  if (job.total_sales_amount != null && Number.isFinite(Number(job.total_sales_amount))) {
-    return Number(job.total_sales_amount) - extra;
-  }
-  return 0;
 }
 
 export async function loadInvoiceDraft(_template: InvoiceTemplate, code: string, start: string, end: string): Promise<InvoiceDraft> {
@@ -137,12 +114,23 @@ export async function loadInvoiceDraft(_template: InvoiceTemplate, code: string,
     }
   }
 
+  const remembered = await rememberedUnitPrices(
+    companyId,
+    jobs
+      .filter((job) => finitePrice(job.unit_price) == null)
+      .map((job) => ({
+        customerCode: String(job.customer_code || ''),
+        customerName: String(job.customer_name || ''),
+        model: String(job.requested_model || ''),
+        shift: String(job.shift_type || ''),
+      }))
+  );
+
   const lines: InvoiceLine[] = [];
   for (const job of jobs) {
     const extraLines = extras.get(job.id) ?? [];
     const extraTotal = extraLines.reduce((sum, line) => sum + line.amount, 0);
-    const standard = standardPrice(models, String(job.requested_model || ''), String(job.shift_type || ''));
-    const base = baseAmount(job, extraTotal, standard);
+    const base = resolveBasePrice(job, extraTotal, models, remembered) ?? 0;
     lines.push({
       date: job.work_date,
       site: String(job.site_name || ''),

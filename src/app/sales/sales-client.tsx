@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import AppSidebar from '@/components/app-sidebar';
 import { formatJapaneseMonthDay, getTodayIso } from '@/lib/crane-utils';
+import { finitePrice, rememberedUnitPrices, resolveBasePrice, type ModelPrice } from '@/lib/sales-price';
 import { getDefaultCompanyId, supabase } from '@/lib/supabase';
 
 type Job = {
@@ -12,6 +13,7 @@ type Job = {
   customer_name: string | null;
   site_name: string | null;
   requested_model: string | null;
+  shift_type?: string | null;
   supplier_name: string | null;
   operator_name: string | null;
   unit_price: number | null;
@@ -26,13 +28,6 @@ type View = 'customer' | 'supplier' | 'model';
 
 const money = (v: number) => `¥${Math.round(v).toLocaleString('ja-JP')}`;
 
-// 売上合計は「基本＋付帯」で保存されるので、付帯を二重に足さない
-function priceOf(job: Job, extra: number) {
-  let base: number | null = null;
-  if (job.unit_price != null && Number.isFinite(Number(job.unit_price))) base = Number(job.unit_price);
-  else if (job.total_sales_amount != null && Number.isFinite(Number(job.total_sales_amount))) base = Number(job.total_sales_amount) - extra;
-  return base;
-}
 
 function monthRange(month: string) {
   const [y, m] = month.split('-').map(Number);
@@ -84,6 +79,23 @@ export default function SalesClient() {
         return;
       }
       const jobs = ((res.data ?? []) as Job[]).filter((j) => !j.is_cancelled);
+      const modelRes = await supabase
+        .from('machine_models')
+        .select('name, standard_price_a, night_standard_price')
+        .eq('company_id', companyId);
+      const models = (modelRes.error ? [] : (modelRes.data ?? [])) as ModelPrice[];
+      if (cancelled) return;
+      const remembered = await rememberedUnitPrices(
+        companyId,
+        jobs
+          .filter((job) => finitePrice(job.unit_price) == null)
+          .map((job) => ({
+            customerCode: job.customer_code || '',
+            customerName: job.customer_name || '',
+            model: job.requested_model || '',
+            shift: job.shift_type || '',
+          }))
+      );
       const map: Record<string, Extra[]> = {};
       const ids = jobs.map((j) => j.id);
       for (let i = 0; i < ids.length; i += 100) {
@@ -101,7 +113,7 @@ export default function SalesClient() {
         jobs.map((job) => {
           const extras = map[job.id] ?? [];
           const extraTotal = extras.reduce((s, e) => s + e.amount, 0);
-          const base = priceOf(job, extraTotal);
+          const base = resolveBasePrice(job, extraTotal, models, remembered);
           return { ...job, base, extras, extraTotal, amount: (base ?? 0) + extraTotal };
         })
       );
@@ -172,7 +184,9 @@ export default function SalesClient() {
         <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">売上集計</h1>
-            <p className="text-sm text-slate-600 mt-1">月ごとに、売上・外注への支払・粗利を内訳つきで見ます（キャンセルは除きます）。</p>
+            <p className="text-sm text-slate-600 mt-1">
+              月ごとに、売上・外注への支払・粗利を内訳つきで見ます。基本単価は配車の単価を使い、未保存の行は得意先・機種の自動単価で計上します（キャンセルは除きます）。
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => setMonth(shiftMonth(month, -1))} className="h-14 w-14 rounded-2xl border-2 border-slate-400 bg-white text-xl font-black">

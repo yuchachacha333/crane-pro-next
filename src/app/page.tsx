@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -30,6 +30,7 @@ import WhiteMapDialog from '@/components/white-map';
 import NearbyPartners, { type CallNumber, type NearbyPartner } from '@/components/nearby-partners';
 import { supabase, getDefaultCompanyId } from '@/lib/supabase';
 import { sameCode, sameParty, partyKey } from '@/lib/party-name';
+import { latestUnitPrice, standardModelPrice, sumExtraAmounts } from '@/lib/sales-price';
 import { toHalfwidthTime } from '@/lib/time-text';
 import {
   getWeekday,
@@ -150,6 +151,10 @@ export default function CraneProApp() {
   const [boardDate, setBoardDate] = useState<string>('');
   const [filter, setFilter] = useState<'all' | 'open' | 'done'>('all');
   const [dispatches, setDispatches] = useState<DispatchRecord[]>([]);
+  const dispatchesRef = useRef(dispatches);
+  useEffect(() => {
+    dispatchesRef.current = dispatches;
+  }, [dispatches]);
   const [loading, setLoading] = useState<boolean>(true);
   const [toastMsg, setToastMsg] = useState<string>('');
 
@@ -350,13 +355,87 @@ export default function CraneProApp() {
     }
   };
 
+  const salesPriceFor = async (
+    customerCode: string,
+    customerName: string,
+    modelName: string,
+    shift: string,
+    excludeId?: string
+  ) => {
+    const remembered = await latestUnitPrice(companyId, customerCode, customerName, modelName, shift, excludeId);
+    if (remembered != null) return remembered;
+    return standardModelPrice(models, modelName, shift);
+  };
+  // 自動で入った基本単価を、詳細の保存を待たずに売上へ残す。
+  const commitAutoPrice = async (
+    id: string,
+    price: number,
+    guard: { code: string; name: string; model: string; shift: string }
+  ) => {
+    const { data, error: extraError } = await supabase
+      .from('dispatch_extras')
+      .select('amount, quantity, unit_price')
+      .eq('dispatch_id', id);
+    const extra = extraError ? 0 : sumExtraAmounts(data ?? []);
+    const total = price + extra;
+    const { data: fresh, error: readError } = await supabase
+      .from('dispatches')
+      .select('customer_code, customer_name, requested_model, shift_type, unit_price, total_sales_amount')
+      .eq('id', id)
+      .single();
+    if (readError || !fresh) return;
+    if ((fresh.customer_code || '') !== guard.code || (fresh.customer_name || '') !== guard.name) return;
+    if ((fresh.requested_model || '') !== guard.model || (fresh.shift_type || '') !== guard.shift) return;
+    if (Number(fresh.unit_price) === price && Number(fresh.total_sales_amount) === total) return;
+
+    let { error } = await supabase
+      .from('dispatches')
+      .update({ unit_price: price, total_sales_amount: total })
+      .eq('id', id);
+    if (error && /total_sales_amount/i.test(error.message)) {
+      ({ error } = await supabase.from('dispatches').update({ unit_price: price }).eq('id', id));
+    }
+    if (error) return;
+    setDispatches((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) return item;
+        if ((item.customer_code || '') !== guard.code || (item.customer_name || '') !== guard.name) return item;
+        if ((item.requested_model || '') !== guard.model || (item.shift_type || '') !== guard.shift) return item;
+        return { ...item, unit_price: price, total_sales_amount: total };
+      })
+    );
+    setSelectedJob((job) =>
+      job && job.id === id && job.unit_price == null ? { ...job, unit_price: price, total_sales_amount: total } : job
+    );
+  };
+  const rememberSalesPrice = (row: DispatchRecord, patch: Partial<DispatchRecord>) => {
+    const next = { ...row, ...patch };
+    const changed =
+      (patch.customer_name !== undefined && patch.customer_name !== row.customer_name) ||
+      (patch.customer_code !== undefined && (patch.customer_code || '') !== (row.customer_code || '')) ||
+      (patch.requested_model !== undefined && patch.requested_model !== row.requested_model) ||
+      (patch.shift_type !== undefined && patch.shift_type !== row.shift_type);
+    if (!changed) return;
+    const code = next.customer_code || '';
+    const name = next.customer_name || '';
+    const model = next.requested_model || '';
+    const shift = next.shift_type || '';
+    if (!model.trim() || (!code && !name)) return;
+    void (async () => {
+      const nextPrice = await salesPriceFor(code, name, model, shift, row.id);
+      if (nextPrice == null) return;
+      await commitAutoPrice(row.id, nextPrice, { code, name, model, shift });
+    })();
+  };
+
   // 行のインライン更新（オートセーブ）
   const handleUpdateField = async (id: string, patch: Partial<DispatchRecord>) => {
+    const previous = dispatchesRef.current.find((item) => item.id === id);
     // 画面状態を即座に反映
     const nextPatch = { ...patch };
     if (typeof nextPatch.entry_time === 'string') nextPatch.entry_time = toHalfwidthTime(nextPatch.entry_time);
-    setDispatches((prev) =>
-      prev.map((row) => {
+    setDispatches((prev) => {
+      const next = prev.map((row) => {
         if (row.id !== id) return row;
         const updated = { ...row, ...nextPatch };
         const hasCrewOrMachine = Boolean(
@@ -367,8 +446,10 @@ export default function CraneProApp() {
         updated.is_dispatched = !updated.is_cancelled && hasCrewOrMachine;
         nextPatch.is_dispatched = updated.is_dispatched;
         return updated;
-      })
-    );
+      });
+      dispatchesRef.current = next;
+      return next;
+    });
 
     const { error } = await supabase.from('dispatches').update(nextPatch).eq('id', id);
     if (error) {
@@ -379,7 +460,9 @@ export default function CraneProApp() {
             ? '庸車の担当者を保存するには、Supabaseで supabase/dispatch_supplier_contact.sql を実行してください'
             : '保存エラー: ' + error.message
       );
+      return;
     }
+    if (previous) rememberSalesPrice(previous, nextPatch);
   };
 
   // 行の削除
@@ -432,7 +515,15 @@ export default function CraneProApp() {
         opened.shift_type || '',
         opened.id
       );
-      if (remembered != null) opened.unit_price = remembered;
+      if (remembered != null) {
+        opened.unit_price = remembered;
+        void commitAutoPrice(opened.id, remembered, {
+          code: opened.customer_code || '',
+          name: opened.customer_name || '',
+          model: opened.requested_model || '',
+          shift: opened.shift_type || '',
+        });
+      }
     }
     if (opened.purchase_amount == null && opened.supplier_name) {
       const remembered = await latestPurchase(opened.supplier_code || '', opened.supplier_name);
@@ -827,7 +918,6 @@ export default function CraneProApp() {
         ...(val ? {} : { customer_code: '', contact_code: '', contact_name: '', contact_tel: '' }),
       };
       handleUpdateField(row.id, patch);
-      rememberSalesPrice(row, patch);
       return;
     }
     const people = peopleFor(hit.code || '', hit.name || '');
@@ -850,91 +940,6 @@ export default function CraneProApp() {
           : {}),
     };
     handleUpdateField(row.id, patch);
-    rememberSalesPrice(row, patch);
-  };
-  const standardPrice = (modelName: string, shift: string) => {
-    const name = modelName.trim();
-    if (!name) return null;
-    const model = models.find((item) => String(item.name || '').trim() === name);
-    if (!model) return null;
-    const night = String(shift || '').includes('夜');
-    const nightPrice = Number(model.night_standard_price);
-    const dayPrice = Number(model.standard_price_a);
-    if (night && Number.isFinite(nightPrice) && nightPrice > 0) return nightPrice;
-    if (Number.isFinite(dayPrice) && dayPrice > 0) return dayPrice;
-    return null;
-  };
-  const latestSalesPrice = async (
-    customerCode: string,
-    customerName: string,
-    modelName: string,
-    shift: string,
-    excludeId?: string
-  ) => {
-    const model = modelName.trim();
-    if (!companyId || !model || (!customerCode && !customerName)) return null;
-    let query = supabase
-      .from('dispatches')
-      .select('id, unit_price, requested_model, shift_type, is_cancelled')
-      .eq('company_id', companyId)
-      .not('unit_price', 'is', null)
-      .order('work_date', { ascending: false })
-      .limit(120);
-    query = customerCode ? query.eq('customer_code', customerCode) : query.eq('customer_name', customerName);
-    const { data, error } = await query;
-    if (error || !data) return null;
-    const night = String(shift || '').includes('夜');
-    const hit = data.find(
-      (item) =>
-        item.id !== excludeId &&
-        !item.is_cancelled &&
-        String(item.requested_model || '').trim() === model &&
-        String(item.shift_type || '').includes('夜') === night &&
-        item.unit_price != null
-    );
-    if (!hit) return null;
-    const amount = Number(hit.unit_price);
-    return Number.isFinite(amount) ? amount : null;
-  };
-  const salesPriceFor = async (
-    customerCode: string,
-    customerName: string,
-    modelName: string,
-    shift: string,
-    excludeId?: string
-  ) => {
-    const remembered = await latestSalesPrice(customerCode, customerName, modelName, shift, excludeId);
-    if (remembered != null) return remembered;
-    return standardPrice(modelName, shift);
-  };
-  const rememberSalesPrice = (row: DispatchRecord, patch: Partial<DispatchRecord>) => {
-    const next = { ...row, ...patch };
-    const changed =
-      (patch.customer_name !== undefined && patch.customer_name !== row.customer_name) ||
-      (patch.customer_code !== undefined && (patch.customer_code || '') !== (row.customer_code || '')) ||
-      (patch.requested_model !== undefined && patch.requested_model !== row.requested_model) ||
-      (patch.shift_type !== undefined && patch.shift_type !== row.shift_type);
-    if (!changed) return;
-    const code = next.customer_code || '';
-    const name = next.customer_name || '';
-    const model = next.requested_model || '';
-    const shift = next.shift_type || '';
-    if (!model.trim() || (!code && !name)) return;
-    void (async () => {
-      const nextPrice = await salesPriceFor(code, name, model, shift, row.id);
-      let write = false;
-      setDispatches((prev) => {
-        const current = prev.find((item) => item.id === row.id);
-        if (!current) return prev;
-        if ((current.customer_code || '') !== code || (current.customer_name || '') !== name) return prev;
-        if ((current.requested_model || '') !== model || (current.shift_type || '') !== shift) return prev;
-        if (current.unit_price !== row.unit_price) return prev;
-        if ((current.unit_price ?? null) === nextPrice) return prev;
-        write = true;
-        return prev.map((item) => (item.id === row.id ? { ...item, unit_price: nextPrice } : item));
-      });
-      if (write) await supabase.from('dispatches').update({ unit_price: nextPrice }).eq('id', row.id);
-    })();
   };
   const latestPurchase = async (supplierCode: string, supplierName: string) => {
     let query = supabase
@@ -1535,11 +1540,7 @@ export default function CraneProApp() {
                             items={modelItems}
                             title="機種を選ぶ"
                             placeholder="選ぶか、直接入力"
-                            onSelect={(name) => {
-                              const patch = { requested_model: name };
-                              handleUpdateField(row.id, patch);
-                              rememberSalesPrice(row, patch);
-                            }}
+                            onSelect={(name) => handleUpdateField(row.id, { requested_model: name })}
                             className={`w-full h-9 px-2 rounded-lg border font-extrabold text-xs outline-none focus:ring-2 focus:ring-teal-600 ${badgeColor}`}
                           />
                         </td>
@@ -1548,11 +1549,7 @@ export default function CraneProApp() {
                         <td className="p-0 border-r border-slate-200">
                           <select
                             value={row.shift_type || '昼'}
-                            onChange={(e) => {
-                              const patch = { shift_type: e.target.value };
-                              handleUpdateField(row.id, patch);
-                              rememberSalesPrice(row, patch);
-                            }}
+                            onChange={(e) => handleUpdateField(row.id, { shift_type: e.target.value })}
                             className="w-full h-11 px-2 bg-transparent font-bold text-center outline-none"
                           >
                             <option value="昼">昼</option>
@@ -1836,11 +1833,7 @@ export default function CraneProApp() {
                         <span className="text-[11px] font-extrabold text-slate-500">時間帯</span>
                         <select
                           value={row.shift_type || '昼'}
-                          onChange={(e) => {
-                            const patch = { shift_type: e.target.value };
-                            handleUpdateField(row.id, patch);
-                            rememberSalesPrice(row, patch);
-                          }}
+                          onChange={(e) => handleUpdateField(row.id, { shift_type: e.target.value })}
                           className={fieldClass}
                         >
                           <option value="昼">昼</option>
@@ -1856,11 +1849,7 @@ export default function CraneProApp() {
                         items={modelItems}
                         title="機種を選ぶ"
                         placeholder="選ぶか、直接入力"
-                        onSelect={(name) => {
-                          const patch = { requested_model: name };
-                          handleUpdateField(row.id, patch);
-                          rememberSalesPrice(row, patch);
-                        }}
+                        onSelect={(name) => handleUpdateField(row.id, { requested_model: name })}
                         className={fieldClass}
                       />
                     </label>
