@@ -2,15 +2,9 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import AppSidebar from '@/components/app-sidebar';
-import { buildAttendance, type AttendanceJob, type OperatorMaster } from '@/lib/attendance';
+import { buildAttendance, payrollClosingMonth, payrollPeriod, type AttendanceJob, type OperatorMaster } from '@/lib/attendance';
 import { formatJapaneseMonthDay, getTodayIso, getWeekday } from '@/lib/crane-utils';
 import { getDefaultCompanyId, supabase } from '@/lib/supabase';
-
-function monthRange(month: string) {
-  const [year, monthNumber] = month.split('-').map(Number);
-  const last = new Date(year, monthNumber, 0).getDate();
-  return { start: `${month}-01`, end: `${month}-${String(last).padStart(2, '0')}` };
-}
 
 function shiftMonth(month: string, delta: number) {
   const [year, monthNumber] = month.split('-').map(Number);
@@ -32,7 +26,7 @@ export default function AttendanceClient() {
   const [open, setOpen] = useState<string | null>(null);
 
   useEffect(() => {
-    setMonth(getTodayIso().slice(0, 7));
+    setMonth(payrollClosingMonth(getTodayIso()));
     getDefaultCompanyId()
       .then(setCompanyId)
       .catch((err: Error) => setError(err.message));
@@ -61,7 +55,9 @@ export default function AttendanceClient() {
     let cancelled = false;
     setLoading(true);
     setOpen(null);
-    const { start, end } = monthRange(month);
+    const period = payrollPeriod(month);
+    if (!period) return;
+    const { start, end } = period;
     supabase
       .from('dispatches')
       .select(
@@ -87,6 +83,7 @@ export default function AttendanceClient() {
     };
   }, [companyId, month]);
 
+  const period = month ? payrollPeriod(month) : null;
   const people = useMemo(() => buildAttendance(operators, jobs), [operators, jobs]);
   const worked = people.filter((person) => person.dayCount > 0);
   const totals = useMemo(
@@ -112,8 +109,13 @@ export default function AttendanceClient() {
           <div>
             <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">出勤集計</h1>
             <p className="text-sm text-slate-600 mt-1">
-              自社オペレーターの月間出勤です。1日の所定は8時間で、超えた分を残業にします。キャンセルと庸車は除きます。
+              自社オペレーターの給与月度です。20日締め（前月21日〜当月20日）で集計します。1日の所定は8時間で、超えた分を残業にします。キャンセルと庸車は除きます。
             </p>
+            {period && (
+              <p className="mt-1 text-base font-black text-slate-800">
+                {Number(period.end.slice(5, 7))}月度　{formatJapaneseMonthDay(period.start)}〜{formatJapaneseMonthDay(period.end)}
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => setMonth(shiftMonth(month, -1))} className="h-14 w-14 rounded-2xl border-2 border-slate-400 bg-white text-xl font-black">

@@ -1,7 +1,22 @@
+import { billingPeriod } from '@/lib/billing';
 import { calculateWorkHours } from '@/lib/crane-utils';
 
 /** 配車の基本料金と同じ、1日の所定労働時間。 */
 export const STANDARD_DAY_HOURS = 8;
+
+/** 自社給与の締日。20日締めは前月21日から当月20日まで。 */
+export const PAYROLL_CLOSE_DAY = 20;
+
+export function payrollPeriod(closingMonth: string): { start: string; end: string } | null {
+  if (!/^\d{4}-\d{2}$/.test(closingMonth)) return null;
+  return billingPeriod(String(PAYROLL_CLOSE_DAY), `${closingMonth}-${String(PAYROLL_CLOSE_DAY).padStart(2, '0')}`);
+}
+
+/** その日が属する給与月度。締め日の年月を返す。 */
+export function payrollClosingMonth(iso: string): string {
+  const period = billingPeriod(String(PAYROLL_CLOSE_DAY), iso);
+  return period ? period.end.slice(0, 7) : iso.slice(0, 7);
+}
 
 export type AttendanceJob = {
   id: string;
