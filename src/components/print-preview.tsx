@@ -188,6 +188,58 @@ function formValues(job: PrintJob, sites: SiteHit[], kind?: PrintKind) {
   };
 }
 
+function letterheadLines(cell: SheetCell, text: string) {
+  const runs = cell.runs;
+  const useRuns = Boolean(runs?.length && runs.map((run) => run.text).join('') === cell.text);
+  const pieces = useRuns ? runs || [] : [{ text, size: cell.size, bold: cell.bold }];
+  const lines: { text: string; size: number; bold: boolean }[] = [];
+  let buf = '';
+  let size = cell.size;
+  let bold = Boolean(cell.bold);
+  let styled = false;
+  const push = () => {
+    lines.push({ text: buf.replace(/[ \t\u3000]+$/g, ''), size, bold });
+    buf = '';
+    styled = false;
+  };
+  for (const run of pieces) {
+    const parts = String(run.text || '').split(/\r\n|\n|\r/);
+    parts.forEach((part, index) => {
+      if (index > 0) push();
+      if (!styled && part) {
+        size = run.size || cell.size;
+        bold = Boolean(run.bold);
+        styled = true;
+      }
+      buf += part;
+    });
+  }
+  push();
+  while (lines.length && !lines[lines.length - 1].text) lines.pop();
+  return lines;
+}
+
+function Letterhead({ cell, text, scale }: { cell: SheetCell; text: string; scale: number }) {
+  return (
+    <>
+      {letterheadLines(cell, text).map((line, index) => (
+        <div
+          key={index}
+          style={{
+            whiteSpace: 'nowrap',
+            wordBreak: 'keep-all',
+            overflowWrap: 'normal',
+            fontSize: `${(line.size * scale) / 100}pt`,
+            fontWeight: line.bold ? 800 : 400,
+          }}
+        >
+          {line.text || '\u00a0'}
+        </div>
+      ))}
+    </>
+  );
+}
+
 function CellText({ cell, text, scale }: { cell: SheetCell; text: string; scale: number }) {
   const runs = cell.runs;
   if (!runs?.length || runs.map((run) => run.text).join('') !== cell.text) return <>{text}</>;
@@ -391,9 +443,12 @@ function FormPage({
                 if (!raw && /^\d{4}年\d{1,2}月\d{1,2}日/.test(text)) text = today;
                 // 罫線のある表のマス目だけ切り詰め、罫線のない文章（振込先・会社情報など）は折り返し／はみ出して表示する
                 const clipCell = clip && Boolean(edges.left || edges.right || edges.top || edges.bottom);
-                const flow = cell.wrap
-                  ? { whiteSpace: 'pre-wrap' as const, wordBreak: 'break-word' as const, overflow: 'hidden' as const }
-                  : { whiteSpace: 'pre' as const, overflow: 'visible' as const, wordBreak: 'normal' as const };
+                const keepLines = /[\r\n]/.test(text);
+                const flow = keepLines
+                  ? { whiteSpace: 'pre' as const, wordBreak: 'keep-all' as const, overflowWrap: 'normal' as const, overflow: 'hidden' as const }
+                  : cell.wrap
+                    ? { whiteSpace: 'pre-wrap' as const, wordBreak: 'break-word' as const, overflow: 'hidden' as const }
+                    : { whiteSpace: 'pre' as const, overflow: 'visible' as const, wordBreak: 'normal' as const };
                 return (
                   <td
                     key={col}
@@ -424,7 +479,9 @@ function FormPage({
                       textOverflow: clipCell ? 'clip' : undefined,
                     }}
                   >
-                    {clipCell ? (
+                    {keepLines ? (
+                      <Letterhead cell={cell} text={text} scale={fontScale} />
+                    ) : clipCell ? (
                       <CellText cell={cell} text={text} scale={fontScale} />
                     ) : (
                       <SheetSpill cell={cell} text={text} scale={fontScale} />
@@ -659,17 +716,28 @@ async function sheetsToPdf(title: string) {
   const pageH = pdf.internal.pageSize.getHeight();
   // 画面の縮小表示を使わず、原寸の複製を撮る。1枚のひな形はPDFも1ページにする
   const stage = document.createElement('div');
-  stage.setAttribute('style', 'position:fixed;left:-20000px;top:0;pointer-events:none;background:#fff');
+  // 画面外の左へ飛ばすと、携帯では幅が画面幅まで縮み、郵便番号が途中で折り返す
+  stage.setAttribute(
+    'style',
+    'position:fixed;left:0;top:0;pointer-events:none;z-index:0;background:#fff;-webkit-text-size-adjust:100%;text-size-adjust:100%'
+  );
   document.body.appendChild(stage);
   try {
     for (let i = 0; i < pages.length; i++) {
       const clone = pages[i].cloneNode(true) as HTMLElement;
       const landscape = clone.getAttribute('data-orient') === 'landscape';
+      const pxW = landscape ? 1123 : 794;
+      const pxH = landscape ? 794 : 1123;
       clone.style.margin = '0';
       clone.style.boxShadow = 'none';
       clone.style.transform = 'none';
-      clone.style.width = landscape ? '297mm' : '210mm';
-      clone.style.height = landscape ? '210mm' : '297mm';
+      stage.style.width = `${pxW}px`;
+      stage.style.minWidth = `${pxW}px`;
+      clone.style.width = `${pxW}px`;
+      clone.style.minWidth = `${pxW}px`;
+      clone.style.height = `${pxH}px`;
+      clone.style.setProperty('-webkit-text-size-adjust', '100%');
+      clone.style.setProperty('text-size-adjust', '100%');
       clone.style.minHeight = '0';
       clone.style.overflow = 'hidden';
       clone.style.display = 'flex';
@@ -860,6 +928,8 @@ function pageFrame(layout: SheetLayout): CSSProperties {
       justifyContent: 'center',
       alignItems: 'stretch',
       overflow: 'hidden',
+      WebkitTextSizeAdjust: '100%',
+      textSizeAdjust: '100%',
     };
   }
   const exact = Boolean(layout.fixedImages);
@@ -878,6 +948,8 @@ function pageFrame(layout: SheetLayout): CSSProperties {
     display: 'flex',
     flexDirection: 'column',
     justifyContent: exact ? 'flex-start' : 'center',
+    WebkitTextSizeAdjust: '100%',
+    textSizeAdjust: '100%',
   };
 }
 
