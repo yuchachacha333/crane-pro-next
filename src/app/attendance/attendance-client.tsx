@@ -16,8 +16,18 @@ function hoursOf(value: number) {
   return `${Math.round(value * 10) / 10}h`;
 }
 
+function WithPlanned({ total, planned }: { total: string; planned?: string }) {
+  return (
+    <>
+      <div>{total}</div>
+      {planned && <div className="text-xs font-bold text-sky-800">（内予定 {planned}）</div>}
+    </>
+  );
+}
+
 export default function AttendanceClient() {
   const [companyId, setCompanyId] = useState('');
+  const [today, setToday] = useState('');
   const [month, setMonth] = useState('');
   const [operators, setOperators] = useState<OperatorMaster[]>([]);
   const [jobs, setJobs] = useState<AttendanceJob[]>([]);
@@ -26,7 +36,9 @@ export default function AttendanceClient() {
   const [open, setOpen] = useState<string | null>(null);
 
   useEffect(() => {
-    setMonth(payrollClosingMonth(getTodayIso()));
+    const iso = getTodayIso();
+    setToday(iso);
+    setMonth(payrollClosingMonth(iso));
     getDefaultCompanyId()
       .then(setCompanyId)
       .catch((err: Error) => setError(err.message));
@@ -84,15 +96,19 @@ export default function AttendanceClient() {
   }, [companyId, month]);
 
   const period = month ? payrollPeriod(month) : null;
-  const people = useMemo(() => buildAttendance(operators, jobs), [operators, jobs]);
+  const people = useMemo(() => (today ? buildAttendance(operators, jobs, today) : []), [operators, jobs, today]);
   const worked = people.filter((person) => person.dayCount > 0);
   const totals = useMemo(
     () => ({
       people: worked.length,
       days: worked.reduce((sum, person) => sum + person.dayCount, 0),
+      scheduledDays: worked.reduce((sum, person) => sum + person.scheduledDays, 0),
       hours: Math.round(worked.reduce((sum, person) => sum + person.hours, 0) * 10) / 10,
+      scheduledHours: Math.round(worked.reduce((sum, person) => sum + person.scheduledHours, 0) * 10) / 10,
       overtime: Math.round(worked.reduce((sum, person) => sum + person.overtime, 0) * 10) / 10,
+      scheduledOvertime: Math.round(worked.reduce((sum, person) => sum + person.scheduledOvertime, 0) * 10) / 10,
       night: worked.reduce((sum, person) => sum + person.nightDays, 0),
+      scheduledNight: worked.reduce((sum, person) => sum + person.scheduledNightDays, 0),
       missing: worked.reduce((sum, person) => sum + person.missingJobs, 0),
     }),
     [worked]
@@ -109,7 +125,7 @@ export default function AttendanceClient() {
           <div>
             <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">出勤集計</h1>
             <p className="text-sm text-slate-600 mt-1">
-              自社オペレーターの給与月度です。20日締め（前月21日〜当月20日）で集計します。1日の所定は8時間で、超えた分を残業にします。キャンセルと庸車は除きます。
+              自社オペレーターの給与月度です。20日締め（前月21日〜当月20日）で集計します。今日までの日を出勤、明日以降を予定として、出勤合計の内数で出します。1日の所定は8時間で、超えた分を残業にします。キャンセルと庸車は除きます。
             </p>
             {period && (
               <p className="mt-1 text-base font-black text-slate-800">
@@ -138,10 +154,10 @@ export default function AttendanceClient() {
         <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
           {[
             { label: '出勤した従業員', value: `${totals.people}人`, sub: `マスタ ${operators.length}人` },
-            { label: '出勤日数', value: `${totals.days}日`, sub: 'のべ日数' },
-            { label: '実働時間', value: hoursOf(totals.hours), sub: '' },
-            { label: '残業', value: hoursOf(totals.overtime), sub: '1日8時間を超えた分' },
-            { label: '夜勤', value: `${totals.night}日`, sub: totals.missing ? `時間未入力 ${totals.missing}件` : '' },
+            { label: '出勤合計', value: `${totals.days}日`, sub: totals.scheduledDays ? `内予定 ${totals.scheduledDays}日` : '予定はありません' },
+            { label: '実働時間', value: hoursOf(totals.hours), sub: totals.scheduledHours ? `内予定 ${hoursOf(totals.scheduledHours)}` : '' },
+            { label: '残業', value: hoursOf(totals.overtime), sub: totals.scheduledOvertime ? `内予定 ${hoursOf(totals.scheduledOvertime)}` : '1日8時間を超えた分' },
+            { label: '夜勤', value: `${totals.night}日`, sub: [totals.scheduledNight ? `内予定 ${totals.scheduledNight}日` : '', totals.missing ? `時間未入力 ${totals.missing}件` : ''].filter(Boolean).join('　') },
           ].map((card) => (
             <div key={card.label} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="text-sm font-extrabold text-slate-600">{card.label}</div>
@@ -159,7 +175,7 @@ export default function AttendanceClient() {
               <thead>
                 <tr className="bg-slate-800 text-left text-white">
                   <th className={th}>従業員</th>
-                  <th className={`${th} text-right`}>出勤日数</th>
+                  <th className={`${th} text-right`}>出勤合計</th>
                   <th className={`${th} text-right`}>実働</th>
                   <th className={`${th} text-right`}>所定内</th>
                   <th className={`${th} text-right`}>残業</th>
@@ -179,11 +195,27 @@ export default function AttendanceClient() {
                           {!person.registered && <span className="ml-2 text-xs font-bold text-rose-700">マスタ未登録</span>}
                           {person.dayCount === 0 && <span className="ml-2 text-xs font-bold text-slate-500">出勤なし</span>}
                         </td>
-                        <td className={`${td} text-right font-black`}>{person.dayCount}日</td>
-                        <td className={`${td} text-right font-bold`}>{hoursOf(person.hours)}</td>
+                        <td className={`${td} text-right font-black`}>
+                          <WithPlanned total={`${person.dayCount}日`} planned={person.scheduledDays ? `${person.scheduledDays}日` : undefined} />
+                        </td>
+                        <td className={`${td} text-right font-bold`}>
+                          <WithPlanned total={hoursOf(person.hours)} planned={person.scheduledHours ? hoursOf(person.scheduledHours) : undefined} />
+                        </td>
                         <td className={`${td} text-right font-bold`}>{hoursOf(person.regular)}</td>
-                        <td className={`${td} text-right font-bold`}>{person.overtime ? hoursOf(person.overtime) : '—'}</td>
-                        <td className={`${td} text-right font-bold`}>{person.nightDays ? `${person.nightDays}日` : '—'}</td>
+                        <td className={`${td} text-right font-bold`}>
+                          {person.overtime ? (
+                            <WithPlanned total={hoursOf(person.overtime)} planned={person.scheduledOvertime ? hoursOf(person.scheduledOvertime) : undefined} />
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                        <td className={`${td} text-right font-bold`}>
+                          {person.nightDays ? (
+                            <WithPlanned total={`${person.nightDays}日`} planned={person.scheduledNightDays ? `${person.scheduledNightDays}日` : undefined} />
+                          ) : (
+                            '—'
+                          )}
+                        </td>
                         <td className={`${td} text-right font-bold`}>
                           {person.jobCount}
                           {person.missingJobs > 0 && <span className="ml-1 text-xs text-amber-800">時間未入力{person.missingJobs}</span>}
@@ -191,10 +223,11 @@ export default function AttendanceClient() {
                       </tr>
                       {isOpen &&
                         person.days.map((day) => (
-                          <tr key={`${person.key}-${day.date}`} className="bg-slate-50 text-sm">
+                          <tr key={`${person.key}-${day.date}`} className={`text-sm ${day.scheduled ? 'bg-sky-50' : 'bg-slate-50'}`}>
                             <td className="border border-slate-300 py-2 pl-8 pr-3">
                               <div className="font-bold">
                                 {formatJapaneseMonthDay(day.date)}（{getWeekday(day.date)}）
+                                {day.scheduled && <span className="ml-2 text-xs font-black text-sky-800">予定</span>}
                                 {day.night && <span className="ml-2 text-xs font-black text-indigo-800">夜勤</span>}
                               </div>
                               {day.jobs.map((job) => (
@@ -238,11 +271,19 @@ export default function AttendanceClient() {
                 <tfoot>
                   <tr className="border-t-4 border-slate-800 bg-slate-50 font-black">
                     <td className={td}>合計</td>
-                    <td className={`${td} text-right`}>{totals.days}日</td>
-                    <td className={`${td} text-right`}>{hoursOf(totals.hours)}</td>
+                    <td className={`${td} text-right`}>
+                      <WithPlanned total={`${totals.days}日`} planned={totals.scheduledDays ? `${totals.scheduledDays}日` : undefined} />
+                    </td>
+                    <td className={`${td} text-right`}>
+                      <WithPlanned total={hoursOf(totals.hours)} planned={totals.scheduledHours ? hoursOf(totals.scheduledHours) : undefined} />
+                    </td>
                     <td className={`${td} text-right`}>{hoursOf(Math.round(worked.reduce((sum, person) => sum + person.regular, 0) * 10) / 10)}</td>
-                    <td className={`${td} text-right`}>{hoursOf(totals.overtime)}</td>
-                    <td className={`${td} text-right`}>{totals.night}日</td>
+                    <td className={`${td} text-right`}>
+                      <WithPlanned total={hoursOf(totals.overtime)} planned={totals.scheduledOvertime ? hoursOf(totals.scheduledOvertime) : undefined} />
+                    </td>
+                    <td className={`${td} text-right`}>
+                      <WithPlanned total={`${totals.night}日`} planned={totals.scheduledNight ? `${totals.scheduledNight}日` : undefined} />
+                    </td>
                     <td className={`${td} text-right`}>{worked.reduce((sum, person) => sum + person.jobCount, 0)}</td>
                   </tr>
                 </tfoot>

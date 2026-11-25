@@ -60,6 +60,8 @@ export type AttendanceDay = {
   overtime: number;
   night: boolean;
   missing: boolean;
+  /** 作業日が今日より後なら予定。今日までを出勤とする。 */
+  scheduled: boolean;
 };
 
 export type AttendancePerson = {
@@ -70,11 +72,16 @@ export type AttendancePerson = {
   sortOrder: number;
   days: AttendanceDay[];
   dayCount: number;
+  scheduledDays: number;
   jobCount: number;
+  scheduledJobs: number;
   hours: number;
+  scheduledHours: number;
   regular: number;
   overtime: number;
+  scheduledOvertime: number;
   nightDays: number;
+  scheduledNightDays: number;
   missingJobs: number;
 };
 
@@ -105,7 +112,7 @@ export function isEmployeeJob(job: AttendanceJob) {
   return true;
 }
 
-export function buildAttendance(operators: OperatorMaster[], jobs: AttendanceJob[]): AttendancePerson[] {
+export function buildAttendance(operators: OperatorMaster[], jobs: AttendanceJob[], today: string): AttendancePerson[] {
   const byCode = new Map<string, OperatorMaster>();
   const byName = new Map<string, OperatorMaster>();
   for (const operator of operators) {
@@ -131,11 +138,16 @@ export function buildAttendance(operators: OperatorMaster[], jobs: AttendanceJob
       sortOrder: Number(operator?.sort_order) || 0,
       days: [],
       dayCount: 0,
+      scheduledDays: 0,
       jobCount: 0,
+      scheduledJobs: 0,
       hours: 0,
+      scheduledHours: 0,
       regular: 0,
       overtime: 0,
+      scheduledOvertime: 0,
       nightDays: 0,
+      scheduledNightDays: 0,
       missingJobs: 0,
     };
     people.set(key, created);
@@ -166,6 +178,7 @@ export function buildAttendance(operators: OperatorMaster[], jobs: AttendanceJob
       overtime: 0,
       night: false,
       missing: false,
+      scheduled: date > today,
     };
     const hours = jobHours(job);
     const night = isNightShift(job.shift_type);
@@ -200,12 +213,21 @@ export function buildAttendance(operators: OperatorMaster[], jobs: AttendanceJob
       person.jobCount += day.jobs.length;
       person.missingJobs += day.jobs.filter((job) => job.hours == null).length;
       if (day.night) person.nightDays += 1;
+      if (day.scheduled) {
+        person.scheduledDays += 1;
+        person.scheduledJobs += day.jobs.length;
+        person.scheduledHours += day.hours;
+        person.scheduledOvertime += day.overtime;
+        if (day.night) person.scheduledNightDays += 1;
+      }
     }
     person.days = days;
     person.dayCount = days.length;
     person.hours = roundHours(person.hours);
+    person.scheduledHours = roundHours(person.scheduledHours);
     person.regular = roundHours(person.regular);
     person.overtime = roundHours(person.overtime);
+    person.scheduledOvertime = roundHours(person.scheduledOvertime);
   }
 
   return [...people.values()].sort(
