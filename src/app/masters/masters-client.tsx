@@ -251,6 +251,13 @@ export default function MastersClient() {
       delete rest.longitude;
       result = await write(rest);
     }
+    let wageSkipped = false;
+    if (result.error && /daily_wage/i.test(result.error.message)) {
+      const rest = { ...payload };
+      delete rest.daily_wage;
+      result = await write(rest);
+      wageSkipped = !result.error;
+    }
     const { data, error: saveError } = result;
     setSaving(false);
     if (saveError) {
@@ -269,7 +276,11 @@ export default function MastersClient() {
     }
     const saved = data as Row;
     setSelectedId(saved.id);
-    setMessage('保存しました');
+    if (wageSkipped) {
+      setError('氏名などは保存しました。日給の列がまだないため、日給は保存できていません。Supabaseで supabase/operator_daily_wage.sql を実行してください。山科重機工業の従業員は、それまでは2万円で計算します。');
+    } else {
+      setMessage('保存しました');
+    }
     await loadRows(master, companyId, query);
   }
 
