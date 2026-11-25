@@ -1,6 +1,6 @@
-import { BarChart3, Bell, Building2, Calendar, FileText, MapPin, Receipt } from 'lucide-react';
+import { BarChart3, Bell, Building2, Calendar, ClipboardList, FileText, MapPin, Receipt } from 'lucide-react';
 
-type NavKey = 'board' | 'billing' | 'sales' | 'masters' | 'alerts' | 'import' | 'find';
+type NavKey = 'board' | 'billing' | 'sales' | 'attendance' | 'masters' | 'alerts' | 'import' | 'find';
 
 // スマホ: 上の横並びバー / iPad(md〜xl): 細いアイコンだけの縦レール / PC(xl〜): 文字つきサイドバー
 const itemClass =
@@ -11,6 +11,7 @@ const ITEMS: { key: NavKey; href: string; label: string; Icon: typeof Calendar }
   { key: 'find', href: '/find-crane', label: 'クレーンを探す', Icon: MapPin },
   { key: 'billing', href: '/billing', label: '請求・締め集計', Icon: Receipt },
   { key: 'sales', href: '/sales', label: '売上集計', Icon: BarChart3 },
+  { key: 'attendance', href: '/attendance', label: '出勤集計', Icon: ClipboardList },
   { key: 'masters', href: '/masters', label: 'マスタ台帳', Icon: Building2 },
   { key: 'alerts', href: '/alerts', label: '期限アラート', Icon: Bell },
   { key: 'import', href: '/import', label: 'マスタ一括取込', Icon: FileText },
