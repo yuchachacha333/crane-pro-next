@@ -1186,23 +1186,23 @@ export default function CraneProApp() {
             </div>
 
             {/* 日付・曜日・六曜（タップでカレンダー） */}
-            <div className="order-3 flex w-full items-center justify-center gap-2 2xl:order-2 2xl:w-auto 2xl:flex-1 2xl:gap-2">
+            <div className="order-3 flex w-full items-center justify-center gap-1 md:gap-2 2xl:order-2 2xl:w-auto 2xl:flex-1">
               <button
                 onClick={() => setBoardDate(shiftIsoDate(boardDate, -1))}
-                className="w-11 h-11 md:w-14 md:h-14 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-700"
+                className="w-9 h-11 shrink-0 md:w-14 md:h-14 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-700"
                 aria-label="前日"
               >
-                <ChevronLeft className="w-6 h-6 md:w-8 md:h-8" />
+                <ChevronLeft className="w-5 h-5 md:w-8 md:h-8" />
               </button>
 
-              <label className="relative flex h-11 md:h-14 min-w-0 flex-1 md:flex-none cursor-pointer items-center justify-center gap-2 md:gap-3 px-4 md:px-6 rounded-xl bg-sky-50 border border-sky-200">
-                <span className="text-lg md:text-3xl font-black text-slate-900 leading-none whitespace-nowrap">
+              <label className="relative flex min-h-11 h-auto min-w-0 flex-1 cursor-pointer flex-wrap items-center justify-center gap-x-1 gap-y-0.5 rounded-xl border border-sky-200 bg-sky-50 px-2 py-1 md:h-14 md:w-auto md:flex-none md:flex-nowrap md:gap-3 md:px-6">
+                <span className="text-base md:text-3xl font-black text-slate-900 leading-none whitespace-nowrap">
                   {boardDate ? formatJapaneseMonthDay(boardDate) : '…'}
                 </span>
-                <span className="text-sm md:text-lg font-bold text-sky-900 leading-none whitespace-nowrap">（{weekdayLabel}）</span>
+                <span className="shrink-0 text-sm md:text-lg font-bold text-sky-900 leading-none whitespace-nowrap">（{weekdayLabel}）</span>
                 {rokuyoLabel && (
                   <span
-                    className={`px-1.5 md:px-2.5 py-0.5 rounded-full text-[10px] md:text-sm font-extrabold leading-none ${
+                    className={`shrink-0 px-1.5 md:px-2.5 py-0.5 rounded-full text-[11px] md:text-sm font-extrabold leading-none ${
                       rokuyoLabel === '大安'
                         ? 'bg-rose-100 text-rose-800'
                         : rokuyoLabel === '仏滅'
@@ -1217,23 +1217,29 @@ export default function CraneProApp() {
                   type="date"
                   value={boardDate}
                   aria-label="カレンダーから日付を選ぶ"
-                  onClick={(e) => e.currentTarget.showPicker?.()}
+                  onClick={(e) => {
+                    try {
+                      e.currentTarget.showPicker?.();
+                    } catch {
+                      /* 古いiOSはラベルのタップで開く */
+                    }
+                  }}
                   onChange={(e) => e.target.value && setBoardDate(e.target.value)}
-                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                  className="board-date-input"
                 />
               </label>
 
               <button
                 onClick={() => setBoardDate(shiftIsoDate(boardDate, 1))}
-                className="w-11 h-11 md:w-14 md:h-14 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-700"
+                className="w-9 h-11 shrink-0 md:w-14 md:h-14 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-700"
                 aria-label="翌日"
               >
-                <ChevronRight className="w-6 h-6 md:w-8 md:h-8" />
+                <ChevronRight className="w-5 h-5 md:w-8 md:h-8" />
               </button>
 
               <button
                 onClick={() => setBoardDate(getTodayIso())}
-                className="px-4 h-11 md:h-14 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-sm md:text-base font-bold text-slate-700"
+                className="px-2.5 h-11 shrink-0 md:px-4 md:h-14 rounded-xl border border-slate-300 bg-white hover:bg-slate-50 text-sm md:text-base font-bold text-slate-700"
               >
                 今日
               </button>

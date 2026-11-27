@@ -23,6 +23,7 @@ export type PrintJob = {
   contact_tel: string;
   notes: string;
   request_notes?: string;
+  prime_contractor?: string;
   is_cancelled: boolean;
 };
 
@@ -178,7 +179,11 @@ function formValues(job: PrintJob, sites: SiteHit[], kind?: PrintKind) {
     作業日: workLabel(job.work_date),
     入場時間: clockLabel(job.entry_time),
     受付機種: machine,
-    得意先名: job.customer_name || '',
+    // オペレーター指示書の得意先は、元請会社が入っていればそちらを書く
+    得意先名:
+      kind === 'instruction'
+        ? String(job.prime_contractor || '').trim() || job.customer_name || ''
+        : job.customer_name || '',
     現場名: job.site_name || '',
     現場住所: siteAddress(job, sites),
     担当者: String(job.contact_name || '').replace(/様$/, '').trim(),
