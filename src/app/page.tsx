@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -1092,6 +1092,16 @@ export default function CraneProApp() {
     const last = new Date(year, month, 0).getDate();
     return Array.from({ length: last }, (_, index) => `${boardDate.slice(0, 7)}-${String(index + 1).padStart(2, '0')}`);
   }, [boardDate]);
+  const dayStripRef = useRef<HTMLDivElement>(null);
+  // 携帯では1〜31が横スクロールになる。選んだ日が画面の外に残らないよう、その日を中央に出す
+  useLayoutEffect(() => {
+    const root = dayStripRef.current;
+    if (!root || !boardDate) return;
+    const button = root.querySelector<HTMLElement>(`[data-day="${boardDate}"]`);
+    if (!button) return;
+    const left = button.offsetLeft - (root.clientWidth - button.offsetWidth) / 2;
+    root.scrollLeft = Math.max(0, left);
+  }, [boardDate, monthDays]);
 
   return (
     <>
@@ -1248,7 +1258,7 @@ export default function CraneProApp() {
         </div>
 
         {monthDays.length > 0 && (
-          <div className="flex flex-nowrap md:flex-wrap gap-1 mb-3 md:mb-4 overflow-x-auto md:overflow-visible pb-1">
+          <div ref={dayStripRef} className="flex flex-nowrap md:flex-wrap gap-1 mb-3 md:mb-4 overflow-x-auto md:overflow-visible pb-1">
             {monthDays.map((day) => {
               const count = monthCounts[day] ?? 0;
               const active = day === boardDate;
@@ -1257,6 +1267,8 @@ export default function CraneProApp() {
                 <button
                   key={day}
                   type="button"
+                  data-day={day}
+                  aria-current={active ? 'date' : undefined}
                   onClick={() => setBoardDate(day)}
                   className={`h-10 min-w-10 md:h-12 md:min-w-11 shrink-0 px-1.5 md:px-2 rounded-lg text-sm md:text-base font-extrabold leading-none ${
                     unassigned
