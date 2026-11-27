@@ -163,7 +163,7 @@ export default function CraneProApp() {
 
   // 詳細モーダル用ステート
   const [selectedJob, setSelectedJob] = useState<DispatchRecord | null>(null);
-  const [jobTab, setJobTab] = useState<'sales' | 'hire' | 'operator'>('sales');
+  const [jobTab, setJobTab] = useState<'sales' | 'sheet'>('sales');
   const [extras, setExtras] = useState<ExtraLine[]>([]);
   const [savingJob, setSavingJob] = useState<boolean>(false);
 
@@ -565,7 +565,7 @@ export default function CraneProApp() {
     const target = dispatches.find((row) => row.id === pendingJob.id);
     if (!target) return;
     setPendingJob(null);
-    openJobModal(target).then(() => setJobTab(pendingJob.tab));
+    openJobModal(target).then(() => setJobTab(pendingJob.tab === 'sales' ? 'sales' : 'sheet'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingJob, loading, dispatches]);
 
@@ -2060,8 +2060,7 @@ export default function CraneProApp() {
             <div className="bg-white px-5 pt-2 border-b border-slate-200 flex gap-2">
               {[
                 { key: 'sales', label: '売上詳細・付帯明細' },
-                { key: 'hire', label: '庸車・日程変更' },
-                { key: 'operator', label: 'オペレーター作業指示' },
+                { key: 'sheet', label: '庸車・作業指示' },
               ].map((t) => (
                 <button
                   key={t.key}
@@ -2285,17 +2284,26 @@ export default function CraneProApp() {
                 </>
               )}
 
-              {jobTab === 'hire' && (
+              {jobTab === 'sheet' && (
                 <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <h3 className="font-extrabold text-sm text-slate-800">日程変更・現場連絡先・客先設定</h3>
-                    <button
-                      type="button"
-                      onClick={() => openPrint('request', selectedJob.id)}
-                      className="h-9 px-3 rounded-lg border border-slate-300 text-xs font-extrabold"
-                    >
-                      この行の配車依頼書
-                    </button>
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <h3 className="font-extrabold text-sm text-slate-800">庸車・作業指示</h3>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => openPrint('request', selectedJob.id)}
+                        className="h-9 px-3 rounded-lg border border-slate-300 text-xs font-extrabold"
+                      >
+                        この行の配車依頼書
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openPrint('instruction', selectedJob.id)}
+                        className="h-9 px-3 rounded-lg border border-slate-300 text-xs font-extrabold"
+                      >
+                        この行の作業指示書
+                      </button>
+                    </div>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
@@ -2486,36 +2494,6 @@ export default function CraneProApp() {
                         className="w-full p-3 rounded-xl border border-slate-300 font-bold"
                       />
                     </div>
-                    <div className="md:col-span-2">
-                      <label className="block text-xs font-bold text-slate-600 mb-1">
-                        真の客先名（同業他社からの庸車受託時）
-                      </label>
-                      <input
-                        type="text"
-                        value={selectedJob.end_client_name || ''}
-                        onChange={(e) =>
-                          setSelectedJob({ ...selectedJob, end_client_name: e.target.value })
-                        }
-                        className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {jobTab === 'operator' && (
-                <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <h3 className="font-extrabold text-sm text-slate-800">オペレーター作業指示内容</h3>
-                    <button
-                      type="button"
-                      onClick={() => openPrint('instruction', selectedJob.id)}
-                      className="h-9 px-3 rounded-lg border border-slate-300 text-xs font-extrabold"
-                    >
-                      この行の作業指示書
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-bold text-slate-600 mb-1">作業場所</label>
                       <input
@@ -2539,7 +2517,7 @@ export default function CraneProApp() {
                       />
                     </div>
                     <div className="md:col-span-2">
-                      <label className="block text-xs font-bold text-slate-600 mb-1">備考・注意事項</label>
+                      <label className="block text-xs font-bold text-slate-600 mb-1">作業指示の備考・注意事項</label>
                       <textarea
                         rows={3}
                         value={selectedJob.notes || ''}
@@ -2547,6 +2525,19 @@ export default function CraneProApp() {
                           setSelectedJob({ ...selectedJob, notes: e.target.value })
                         }
                         className="w-full p-3 rounded-xl border border-slate-300 font-bold"
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-bold text-slate-600 mb-1">
+                        真の客先名（同業他社からの庸車受託時）
+                      </label>
+                      <input
+                        type="text"
+                        value={selectedJob.end_client_name || ''}
+                        onChange={(e) =>
+                          setSelectedJob({ ...selectedJob, end_client_name: e.target.value })
+                        }
+                        className="w-full h-11 px-3 rounded-xl border border-slate-300 font-bold"
                       />
                     </div>
                   </div>
