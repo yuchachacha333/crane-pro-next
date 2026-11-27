@@ -1093,6 +1093,17 @@ export default function CraneProApp() {
     return Array.from({ length: last }, (_, index) => `${boardDate.slice(0, 7)}-${String(index + 1).padStart(2, '0')}`);
   }, [boardDate]);
   const dayStripRef = useRef<HTMLDivElement>(null);
+  const boardDateRef = useRef<HTMLInputElement>(null);
+  const openBoardDate = () => {
+    const input = boardDateRef.current;
+    if (!input) return;
+    // iPhone は日付入力の文字を消せないので、入力自体は画面の外に置き、ここからカレンダーだけ開く
+    try {
+      input.showPicker();
+    } catch {
+      input.focus();
+    }
+  };
   // 携帯では1〜31が横スクロールになる。選んだ日が画面の外に残らないよう、その日を中央に出す
   useLayoutEffect(() => {
     const root = dayStripRef.current;
@@ -1196,7 +1207,17 @@ export default function CraneProApp() {
             </div>
 
             {/* 日付・曜日・六曜（タップでカレンダー） */}
-            <div className="order-3 flex w-full items-center justify-center gap-1 md:gap-2 2xl:order-2 2xl:w-auto 2xl:flex-1">
+            <div className="relative order-3 flex w-full items-center justify-center gap-1 md:gap-2 2xl:order-2 2xl:w-auto 2xl:flex-1">
+              <div aria-hidden="true" className="pointer-events-none fixed top-0 left-0 h-px w-px overflow-hidden [clip-path:inset(50%)]">
+                <input
+                  ref={boardDateRef}
+                  type="date"
+                  tabIndex={-1}
+                  value={boardDate}
+                  onChange={(e) => e.target.value && setBoardDate(e.target.value)}
+                  className="board-date-input"
+                />
+              </div>
               <button
                 onClick={() => setBoardDate(shiftIsoDate(boardDate, -1))}
                 className="w-9 h-11 shrink-0 md:w-14 md:h-14 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 flex items-center justify-center text-slate-700"
@@ -1205,7 +1226,12 @@ export default function CraneProApp() {
                 <ChevronLeft className="w-5 h-5 md:w-8 md:h-8" />
               </button>
 
-              <label className="relative flex min-h-11 h-auto min-w-0 flex-1 cursor-pointer flex-wrap items-center justify-center gap-x-1 gap-y-0.5 rounded-xl border border-sky-200 bg-sky-50 px-2 py-1 md:h-14 md:w-auto md:flex-none md:flex-nowrap md:gap-3 md:px-6">
+              <button
+                type="button"
+                onClick={openBoardDate}
+                aria-label="カレンダーから日付を選ぶ"
+                className="flex min-h-11 h-auto min-w-0 flex-1 cursor-pointer flex-wrap items-center justify-center gap-x-1 gap-y-0.5 rounded-xl border border-sky-200 bg-sky-50 px-2 py-1 md:h-14 md:w-auto md:flex-none md:flex-nowrap md:gap-3 md:px-6"
+              >
                 <span className="text-base md:text-3xl font-black text-slate-900 leading-none whitespace-nowrap">
                   {boardDate ? formatJapaneseMonthDay(boardDate) : '…'}
                 </span>
@@ -1223,21 +1249,7 @@ export default function CraneProApp() {
                     {rokuyoLabel}
                   </span>
                 )}
-                <input
-                  type="date"
-                  value={boardDate}
-                  aria-label="カレンダーから日付を選ぶ"
-                  onClick={(e) => {
-                    try {
-                      e.currentTarget.showPicker?.();
-                    } catch {
-                      /* 古いiOSはラベルのタップで開く */
-                    }
-                  }}
-                  onChange={(e) => e.target.value && setBoardDate(e.target.value)}
-                  className="board-date-input"
-                />
-              </label>
+              </button>
 
               <button
                 onClick={() => setBoardDate(shiftIsoDate(boardDate, 1))}

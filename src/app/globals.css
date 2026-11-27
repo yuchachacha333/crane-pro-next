@@ -24,16 +24,16 @@ body {
   font-size: 1rem;
 }
 
-/* iPhone の日付入力は opacity:0 でも「2026/11/27」が描かれ、曜日と六曜が外にはみ出す */
+/* iPhone は日付入力の「2026/11/28」を CSS で消せない。幅0の箱に隔離し、画面には出さない */
 .board-date-input {
-  position: absolute;
+  position: static;
+  display: block;
   width: 1px;
   height: 1px;
+  max-width: 1px;
   padding: 0;
-  margin: -1px;
+  margin: 0;
   overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
   border: 0;
   opacity: 0;
   color: transparent;
@@ -41,6 +41,7 @@ body {
   -webkit-text-fill-color: transparent;
   -webkit-appearance: none;
   appearance: none;
+  pointer-events: none;
 }
 
 .board-date-input::-webkit-datetime-edit,
