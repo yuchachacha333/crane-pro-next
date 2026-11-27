@@ -1654,7 +1654,7 @@ export default function CraneProApp() {
                         : 'bg-white border-slate-200'
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-2 mb-2">
+                  <div className="mb-2 flex items-start justify-between gap-2 md:flex-col">
                     <div>
                       <span className="inline-block text-xs font-extrabold text-slate-400 mr-2">
                         #{idx + 1}
@@ -1670,24 +1670,24 @@ export default function CraneProApp() {
                         入場 {toHalfwidthTime(row.entry_time) || '未定'}（{row.shift_type || '昼'}）
                       </span>
                     </div>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 md:w-full md:gap-2">
                       <button
                         type="button"
                         onClick={() => setAttachJobId(row.id)}
-                        className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-800 font-bold text-xs"
+                        className="rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-800 md:min-h-12 md:flex-1 md:px-4 md:text-base"
                       >
                         添付
                       </button>
                       <button
                         type="button"
                         onClick={() => setEditingId(editingId === row.id ? null : row.id)}
-                        className="px-3 py-1.5 rounded-xl bg-white text-slate-800 border border-slate-300 font-bold text-xs"
+                        className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-800 md:min-h-12 md:flex-1 md:px-4 md:text-base"
                       >
                         {editingId === row.id ? '閉じる' : '編集'}
                       </button>
                       <button
                         onClick={() => openJobModal(row)}
-                        className="px-3 py-1.5 rounded-xl bg-teal-700 text-white font-bold text-xs shadow-sm"
+                        className="rounded-xl bg-teal-700 px-3 py-1.5 text-xs font-bold text-white shadow-sm md:min-h-12 md:flex-1 md:px-4 md:text-base"
                       >
                         詳細・売上
                       </button>
