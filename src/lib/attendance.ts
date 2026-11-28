@@ -7,6 +7,36 @@ export const STANDARD_DAY_HOURS = 8;
 /** 自社給与の締日。20日締めは前月21日から当月20日まで。 */
 export const PAYROLL_CLOSE_DAY = 20;
 
+/** 山科重機工業の従業員に使う日給。オペレータマスタの日給が空のときに使う。 */
+export const YAMASHINA_DAILY_WAGE = 20_000;
+
+export function isYamashinaCompany(companyName: string | null | undefined) {
+  return String(companyName || '').replace(/[\s\u3000]/g, '').includes('山科重機工業');
+}
+
+/** 会社の規定日給。山科重機工業以外は、従業員ごとの日給が無いと給与を出せない。 */
+export function companyDailyWage(companyName: string | null | undefined): number | null {
+  return isYamashinaCompany(companyName) ? YAMASHINA_DAILY_WAGE : null;
+}
+
+/** 従業員の日給。入力があればそれを使い、空なら会社の規定日給に戻す。 */
+export function resolveDailyWage(
+  wage: number | string | null | undefined,
+  companyName: string | null | undefined
+): number | null {
+  if (wage != null && String(wage).trim() !== '') {
+    const amount = Number(wage);
+    if (Number.isFinite(amount)) return amount;
+  }
+  return companyDailyWage(companyName);
+}
+
+/** 日給 × 出勤日数。日給が無いときは null。 */
+export function payrollAmount(dailyWage: number | null, days: number): number | null {
+  if (dailyWage == null || !Number.isFinite(days)) return null;
+  return Math.round(dailyWage * days);
+}
+
 export function payrollPeriod(closingMonth: string): { start: string; end: string } | null {
   if (!/^\d{4}-\d{2}$/.test(closingMonth)) return null;
   return billingPeriod(String(PAYROLL_CLOSE_DAY), `${closingMonth}-${String(PAYROLL_CLOSE_DAY).padStart(2, '0')}`);
@@ -38,6 +68,8 @@ export type OperatorMaster = {
   code?: string | null;
   name?: string | null;
   sort_order?: number | null;
+  /** 従業員ごとの日給。空なら会社の規定日給を使う。 */
+  daily_wage?: number | string | null;
 };
 
 export type DayJob = {
@@ -83,6 +115,14 @@ export type AttendancePerson = {
   nightDays: number;
   scheduledNightDays: number;
   missingJobs: number;
+  /** 今日までの出勤日数。予定は含まない。 */
+  workedDays: number;
+  /** この従業員の日給。未設定なら null。 */
+  dailyWage: number | null;
+  /** 日給 × 今日までの出勤日数。 */
+  pay: number | null;
+  /** 予定日の日給合計。給与には含めない。 */
+  scheduledPay: number | null;
 };
 
 function text(value: string | null | undefined) {
@@ -112,7 +152,12 @@ export function isEmployeeJob(job: AttendanceJob) {
   return true;
 }
 
-export function buildAttendance(operators: OperatorMaster[], jobs: AttendanceJob[], today: string): AttendancePerson[] {
+export function buildAttendance(
+  operators: OperatorMaster[],
+  jobs: AttendanceJob[],
+  today: string,
+  companyName = ''
+): AttendancePerson[] {
   const byCode = new Map<string, OperatorMaster>();
   const byName = new Map<string, OperatorMaster>();
   for (const operator of operators) {
@@ -149,6 +194,10 @@ export function buildAttendance(operators: OperatorMaster[], jobs: AttendanceJob
       nightDays: 0,
       scheduledNightDays: 0,
       missingJobs: 0,
+      workedDays: 0,
+      dailyWage: resolveDailyWage(operator?.daily_wage, companyName),
+      pay: null,
+      scheduledPay: null,
     };
     people.set(key, created);
     return created;
@@ -223,6 +272,9 @@ export function buildAttendance(operators: OperatorMaster[], jobs: AttendanceJob
     }
     person.days = days;
     person.dayCount = days.length;
+    person.workedDays = person.dayCount - person.scheduledDays;
+    person.pay = payrollAmount(person.dailyWage, person.workedDays);
+    person.scheduledPay = payrollAmount(person.dailyWage, person.scheduledDays);
     person.hours = roundHours(person.hours);
     person.scheduledHours = roundHours(person.scheduledHours);
     person.regular = roundHours(person.regular);

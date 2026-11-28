@@ -112,6 +112,7 @@ const TABLES: TableDef[] = [
       { column: 'licenses', type: 'text', headers: ['免許', 'licenses'] },
       { column: 'default_product_code', type: 'text', headers: ['標準商品コード', 'default_product_code'] },
       { column: 'large_class', type: 'text', headers: ['オペ大型区分', 'large_class'] },
+      { column: 'daily_wage', type: 'number', headers: ['日給', 'daily_wage'] },
     ],
   },
   {

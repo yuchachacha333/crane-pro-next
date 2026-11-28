@@ -227,13 +227,14 @@ export const MASTER_FORMS: MasterDefinition[] = [
   {
     table: 'operators',
     title: 'オペレータ',
-    blurb: '自社オペレーターと資格',
+    blurb: '自社オペレーターと資格。日給が空欄の山科重機工業の従業員は2万円で計算します',
     searchHint: 'コード、名前、電話、資格',
     requireQuery: false,
     searchColumns: ['code', 'name', 'kana', 'mobile_tel', 'qualifications', 'licenses', 'large_class'],
     listColumns: [
       { key: 'code', label: 'コード' },
       { key: 'name', label: '氏名' },
+      { key: 'daily_wage', label: '日給' },
       { key: 'mobile_tel', label: '携帯' },
       { key: 'large_class', label: '大型区分' },
       { key: 'licenses', label: '免許' },
@@ -247,6 +248,7 @@ export const MASTER_FORMS: MasterDefinition[] = [
           text('kana', 'フリガナ'),
           text('mobile_tel', '携帯電話'),
           text('large_class', '大型区分'),
+          number('daily_wage', '日給'),
           number('sort_order', '表示順'),
           bool('show_in_report', '配車実績表に表示'),
         ],

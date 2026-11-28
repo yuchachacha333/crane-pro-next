@@ -11,7 +11,7 @@ const ITEMS: { key: NavKey; href: string; label: string; Icon: typeof Calendar }
   { key: 'find', href: '/find-crane', label: 'クレーンを探す', Icon: MapPin },
   { key: 'billing', href: '/billing', label: '請求・締め集計', Icon: Receipt },
   { key: 'sales', href: '/sales', label: '売上集計', Icon: BarChart3 },
-  { key: 'attendance', href: '/attendance', label: '出勤集計', Icon: ClipboardList },
+  { key: 'attendance', href: '/attendance', label: '出勤・給与', Icon: ClipboardList },
   { key: 'masters', href: '/masters', label: 'マスタ台帳', Icon: Building2 },
   { key: 'alerts', href: '/alerts', label: '期限アラート', Icon: Bell },
   { key: 'import', href: '/import', label: 'マスタ一括取込', Icon: FileText },

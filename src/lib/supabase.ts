@@ -25,3 +25,18 @@ export async function getDefaultCompanyId(): Promise<string> {
   cachedCompanyId = data.id;
   return data.id;
 }
+
+/** 自社のIDと名称。名称が読めないときは、このアプリの初期会社である山科重機工業有限会社とする。 */
+export async function getDefaultCompany(): Promise<{ id: string; name: string }> {
+  const id = await getDefaultCompanyId();
+  const fallback = '山科重機工業有限会社';
+  const { data, error } = await supabase.from('companies').select('*').eq('id', id).maybeSingle();
+  if (error || !data) return { id, name: fallback };
+  const row = data as Record<string, unknown>;
+  for (const key of ['name', 'company_name', 'official_name', 'name1']) {
+    const value = row[key];
+    if (typeof value === 'string' && value.trim()) return { id, name: value.trim() };
+  }
+  const named = Object.values(row).find((value) => typeof value === 'string' && value.includes('山科重機'));
+  return { id, name: typeof named === 'string' ? named.trim() : fallback };
+}

@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import AppSidebar from '@/components/app-sidebar';
 import { buildAttendance, payrollClosingMonth, payrollPeriod, type AttendanceJob, type OperatorMaster } from '@/lib/attendance';
 import { formatJapaneseMonthDay, getTodayIso, getWeekday } from '@/lib/crane-utils';
-import { getDefaultCompanyId, supabase } from '@/lib/supabase';
+import { getDefaultCompany, supabase } from '@/lib/supabase';
 
 function shiftMonth(month: string, delta: number) {
   const [year, monthNumber] = month.split('-').map(Number);
@@ -14,6 +14,24 @@ function shiftMonth(month: string, delta: number) {
 
 function hoursOf(value: number) {
   return `${Math.round(value * 10) / 10}h`;
+}
+
+function money(value: number) {
+  return `¥${Math.round(value).toLocaleString('ja-JP')}`;
+}
+
+function PayAmount({ pay, planned, workedDays }: { pay: number | null; planned: number | null; workedDays?: number }) {
+  if (pay == null) return <>未設定</>;
+  return (
+    <>
+      <div>{money(pay)}</div>
+      {planned ? (
+        <div className="text-xs font-bold text-sky-800">
+          {workedDays != null ? `${workedDays}日分　` : ''}予定分 {money(planned)}
+        </div>
+      ) : null}
+    </>
+  );
 }
 
 function WithPlanned({ total, planned }: { total: string; planned?: string }) {
@@ -27,35 +45,56 @@ function WithPlanned({ total, planned }: { total: string; planned?: string }) {
 
 export default function AttendanceClient() {
   const [companyId, setCompanyId] = useState('');
+  const [companyName, setCompanyName] = useState<string | null>(null);
   const [today, setToday] = useState('');
   const [month, setMonth] = useState('');
   const [operators, setOperators] = useState<OperatorMaster[]>([]);
   const [jobs, setJobs] = useState<AttendanceJob[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [wageColumnMissing, setWageColumnMissing] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
 
   useEffect(() => {
     const iso = getTodayIso();
     setToday(iso);
     setMonth(payrollClosingMonth(iso));
-    getDefaultCompanyId()
-      .then(setCompanyId)
+    getDefaultCompany()
+      .then((company) => {
+        setCompanyId(company.id);
+        setCompanyName(company.name);
+      })
       .catch((err: Error) => setError(err.message));
   }, []);
 
   useEffect(() => {
     if (!companyId) return;
     let cancelled = false;
+    const apply = (rows: OperatorMaster[], missingWageColumn: boolean, queryError?: string) => {
+      if (cancelled) return;
+      if (queryError) setError(queryError);
+      else setOperators(rows);
+      setWageColumnMissing(missingWageColumn);
+    };
     supabase
       .from('operators')
-      .select('code, name, sort_order')
+      .select('code, name, sort_order, daily_wage')
       .eq('company_id', companyId)
       .order('sort_order', { ascending: true })
       .then(({ data, error: queryError }) => {
         if (cancelled) return;
-        if (queryError) setError(queryError.message);
-        else setOperators((data ?? []) as OperatorMaster[]);
+        if (queryError && /daily_wage/i.test(queryError.message)) {
+          supabase
+            .from('operators')
+            .select('code, name, sort_order')
+            .eq('company_id', companyId)
+            .order('sort_order', { ascending: true })
+            .then(({ data: plain, error: plainError }) => {
+              apply((plain ?? []) as OperatorMaster[], true, plainError?.message);
+            });
+          return;
+        }
+        apply((data ?? []) as OperatorMaster[], false, queryError?.message);
       });
     return () => {
       cancelled = true;
@@ -96,7 +135,10 @@ export default function AttendanceClient() {
   }, [companyId, month]);
 
   const period = month ? payrollPeriod(month) : null;
-  const people = useMemo(() => (today ? buildAttendance(operators, jobs, today) : []), [operators, jobs, today]);
+  const people = useMemo(
+    () => (today && companyName != null ? buildAttendance(operators, jobs, today, companyName) : []),
+    [operators, jobs, today, companyName]
+  );
   const worked = people.filter((person) => person.dayCount > 0);
   const totals = useMemo(
     () => ({
@@ -110,6 +152,9 @@ export default function AttendanceClient() {
       night: worked.reduce((sum, person) => sum + person.nightDays, 0),
       scheduledNight: worked.reduce((sum, person) => sum + person.scheduledNightDays, 0),
       missing: worked.reduce((sum, person) => sum + person.missingJobs, 0),
+      pay: worked.reduce((sum, person) => sum + (person.pay ?? 0), 0),
+      scheduledPay: worked.reduce((sum, person) => sum + (person.scheduledPay ?? 0), 0),
+      unsetWage: worked.filter((person) => person.dailyWage == null).length,
     }),
     [worked]
   );
@@ -123,10 +168,15 @@ export default function AttendanceClient() {
       <main className="flex-1 min-w-0 p-4 md:p-6">
         <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">出勤集計</h1>
+            <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">出勤・給与</h1>
             <p className="text-sm text-slate-600 mt-1">
-              自社オペレーターの給与月度です。20日締め（前月21日〜当月20日）で集計します。今日までの日を出勤、明日以降を予定として、出勤合計の内数で出します。1日の所定は8時間で、超えた分を残業にします。キャンセルと庸車は除きます。
+              自社オペレーターの給与月度です。20日締め（前月21日〜当月20日）で集計します。今日までの日を出勤、明日以降を予定として、出勤合計の内数で出します。給与は、従業員ごとの日給に今日までの出勤日数を掛けた額です。予定の日は給与に入れず、予定分として別に出します。日給が空の山科重機工業の従業員は2万円です。同じ日に配車が複数あっても1日分で、残業では割り増しません。キャンセルと庸車は除きます。
             </p>
+            {wageColumnMissing && (
+              <p className="mt-1 text-sm font-bold text-amber-800">
+                従業員ごとの日給を保存するには、Supabaseで supabase/operator_daily_wage.sql を実行してください。それまでは山科重機工業の日給2万円で計算します。
+              </p>
+            )}
             {period && (
               <p className="mt-1 text-base font-black text-slate-800">
                 {Number(period.end.slice(5, 7))}月度　{formatJapaneseMonthDay(period.start)}〜{formatJapaneseMonthDay(period.end)}
@@ -151,10 +201,15 @@ export default function AttendanceClient() {
 
         {error && <p className="mb-3 text-sm font-bold text-rose-700">{error}</p>}
 
-        <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
           {[
             { label: '出勤した従業員', value: `${totals.people}人`, sub: `マスタ ${operators.length}人` },
             { label: '出勤合計', value: `${totals.days}日`, sub: totals.scheduledDays ? `内予定 ${totals.scheduledDays}日` : '予定はありません' },
+            {
+              label: '給与',
+              value: totals.people > 0 && totals.unsetWage === totals.people ? '未設定' : money(totals.pay),
+              sub: [totals.scheduledPay ? `予定分 ${money(totals.scheduledPay)}` : '今日までの出勤 × 日給', totals.unsetWage ? `単価未設定 ${totals.unsetWage}人` : ''].filter(Boolean).join('　'),
+            },
             { label: '実働時間', value: hoursOf(totals.hours), sub: totals.scheduledHours ? `内予定 ${hoursOf(totals.scheduledHours)}` : '' },
             { label: '残業', value: hoursOf(totals.overtime), sub: totals.scheduledOvertime ? `内予定 ${hoursOf(totals.scheduledOvertime)}` : '1日8時間を超えた分' },
             { label: '夜勤', value: `${totals.night}日`, sub: [totals.scheduledNight ? `内予定 ${totals.scheduledNight}日` : '', totals.missing ? `時間未入力 ${totals.missing}件` : ''].filter(Boolean).join('　') },
@@ -171,11 +226,13 @@ export default function AttendanceClient() {
 
         <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] border-collapse text-base">
+            <table className="w-full min-w-[980px] border-collapse text-base">
               <thead>
                 <tr className="bg-slate-800 text-left text-white">
                   <th className={th}>従業員</th>
+                  <th className={`${th} text-right`}>日給</th>
                   <th className={`${th} text-right`}>出勤合計</th>
+                  <th className={`${th} text-right`}>給与</th>
                   <th className={`${th} text-right`}>実働</th>
                   <th className={`${th} text-right`}>所定内</th>
                   <th className={`${th} text-right`}>残業</th>
@@ -195,8 +252,12 @@ export default function AttendanceClient() {
                           {!person.registered && <span className="ml-2 text-xs font-bold text-rose-700">マスタ未登録</span>}
                           {person.dayCount === 0 && <span className="ml-2 text-xs font-bold text-slate-500">出勤なし</span>}
                         </td>
+                        <td className={`${td} text-right font-black`}>{person.dailyWage == null ? '未設定' : money(person.dailyWage)}</td>
                         <td className={`${td} text-right font-black`}>
                           <WithPlanned total={`${person.dayCount}日`} planned={person.scheduledDays ? `${person.scheduledDays}日` : undefined} />
+                        </td>
+                        <td className={`${td} text-right font-black`}>
+                          <PayAmount pay={person.pay} planned={person.scheduledPay} workedDays={person.workedDays} />
                         </td>
                         <td className={`${td} text-right font-bold`}>
                           <WithPlanned total={hoursOf(person.hours)} planned={person.scheduledHours ? hoursOf(person.scheduledHours) : undefined} />
@@ -242,6 +303,10 @@ export default function AttendanceClient() {
                               ))}
                             </td>
                             <td className="border border-slate-300" />
+                            <td className="border border-slate-300" />
+                            <td className={`${td} text-right font-bold ${day.scheduled ? 'text-sky-800' : ''}`}>
+                              {person.dailyWage == null ? '—' : day.scheduled ? `予定 ${money(person.dailyWage)}` : money(person.dailyWage)}
+                            </td>
                             <td className={`${td} text-right font-bold`}>{hoursOf(day.hours)}</td>
                             <td className={`${td} text-right font-bold`}>{hoursOf(day.regular)}</td>
                             <td className={`${td} text-right font-bold`}>{day.overtime ? hoursOf(day.overtime) : '—'}</td>
@@ -251,7 +316,7 @@ export default function AttendanceClient() {
                         ))}
                       {isOpen && person.days.length === 0 && (
                         <tr className="bg-slate-50 text-sm">
-                          <td colSpan={7} className="border border-slate-300 px-8 py-3 font-bold text-slate-600">
+                          <td colSpan={9} className="border border-slate-300 px-8 py-3 font-bold text-slate-600">
                             この月の配車はありません。
                           </td>
                         </tr>
@@ -259,9 +324,9 @@ export default function AttendanceClient() {
                     </React.Fragment>
                   );
                 })}
-                {!loading && people.length === 0 && (
+                {!loading && companyName != null && people.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="border border-slate-300 px-4 py-6 text-sm font-bold text-slate-600">
+                    <td colSpan={9} className="border border-slate-300 px-4 py-6 text-sm font-bold text-slate-600">
                       オペレーターマスタがまだありません。マスタ台帳で自社の従業員を登録すると、ここに出ます。
                     </td>
                   </tr>
@@ -271,8 +336,12 @@ export default function AttendanceClient() {
                 <tfoot>
                   <tr className="border-t-4 border-slate-800 bg-slate-50 font-black">
                     <td className={td}>合計</td>
+                    <td className={td} />
                     <td className={`${td} text-right`}>
                       <WithPlanned total={`${totals.days}日`} planned={totals.scheduledDays ? `${totals.scheduledDays}日` : undefined} />
+                    </td>
+                    <td className={`${td} text-right`}>
+                      <PayAmount pay={totals.unsetWage === worked.length ? null : totals.pay} planned={totals.scheduledPay} />
                     </td>
                     <td className={`${td} text-right`}>
                       <WithPlanned total={hoursOf(totals.hours)} planned={totals.scheduledHours ? hoursOf(totals.scheduledHours) : undefined} />
